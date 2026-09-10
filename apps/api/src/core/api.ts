@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
+import { MongoServerError } from 'mongodb';
 import { ZodError, z } from 'zod';
 
 export type ApiErrorCode = 'VALIDATION_ERROR' | 'UNAUTHORIZED' | 'FORBIDDEN' | 'NOT_FOUND' | 'CONFLICT' | 'INTERNAL_ERROR';
@@ -33,9 +34,11 @@ export function requestId(req: Request, res: Response, next: NextFunction): void
 }
 
 export function errorMiddleware(error: unknown, _req: Request, res: Response, _next: NextFunction): void {
+  if (res.headersSent) return;
   if (error instanceof ZodError) { fail(res, 400, 'VALIDATION_ERROR', 'Request validation failed', error.issues.map(i => ({ path: i.path, message: i.message, code: i.code }))); return; }
   if (error instanceof Error && error.message === 'TENANT_ID_IMMUTABLE') { fail(res, 400, 'VALIDATION_ERROR', 'companyId cannot be changed'); return; }
   if (error instanceof Error && error.message === 'PASSWORD_TOO_SHORT') { fail(res, 400, 'VALIDATION_ERROR', 'Password must contain at least 10 characters'); return; }
+  if (error instanceof MongoServerError && error.code === 11000) { fail(res, 409, 'CONFLICT', 'Resource already exists'); return; }
   console.error({ requestId: res.locals.requestId, error });
   fail(res, 500, 'INTERNAL_ERROR');
 }
