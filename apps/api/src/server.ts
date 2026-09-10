@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import updates from './updates.js';
-import { ensureCoreCollections } from './core/db.js';
+import { ensureCoreCollections, ensureModuleCollections } from './core/db.js';
 import { coreRouter } from './core/routes.js';
 
 const PORT = Number(process.env.PORT ?? 10000);
@@ -16,6 +16,7 @@ const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
 await mongo.connect();
 const db = mongo.db(MONGODB_DB);
 await ensureCoreCollections(db);
+await ensureModuleCollections(db);
 
 const app = express();
 app.disable('x-powered-by');
