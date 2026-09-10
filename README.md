@@ -1,6 +1,6 @@
 # KORCZAK ERP
 
-Desktop ERP da Korczak Technologies para Linux.
+Desktop ERP da Korczak Technologies para Linux..
 
 ## Diretrizes atuais
 
