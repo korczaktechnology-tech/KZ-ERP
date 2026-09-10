@@ -48,11 +48,11 @@ jobs:
           releaseBody: 'Release oficial do KORCZAK ERP para Linux.'
           releaseDraft: false
           prerelease: false
-          args: --bundles appimage,deb
+          args: --bundles deb
       - name: Generate checksums
         run: |
           mkdir -p release-checksums
-          sha256sum apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage > release-checksums/SHA256SUMS.txt
+          sha256sum apps/desktop/src-tauri/target/release/bundle/deb/*.deb > release-checksums/SHA256SUMS.txt
       - name: Upload checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
