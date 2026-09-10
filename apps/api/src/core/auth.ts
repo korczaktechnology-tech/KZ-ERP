@@ -3,12 +3,15 @@ import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser, Role } from './types.js';
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 8;
-const SECRET = process.env.AUTH_SECRET;
-if (!SECRET || SECRET.length < 32) throw new Error('AUTH_SECRET must be set and contain at least 32 characters');
+const getSecret = (): string => {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret || secret.length < 32) throw new Error('AUTH_SECRET must be set and contain at least 32 characters');
+  return secret;
+};
 
-type TokenPayload = AuthUser & { iat: number; exp: number };
+type TokenPayload = AuthUser & { iat: number; exp: number; jti: string };
 const b64 = (value: string | Buffer) => Buffer.from(value).toString('base64url');
-const sign = (input: string) => b64(crypto.createHmac('sha256', SECRET).update(input).digest());
+const sign = (input: string) => b64(crypto.createHmac('sha256', getSecret()).update(input).digest());
 
 export function hashPassword(password: string): string {
   if (password.length < 10) throw new Error('PASSWORD_TOO_SHORT');
@@ -31,7 +34,7 @@ export function verifyPassword(password: string, encoded: string): boolean {
 export function createToken(user: AuthUser): string {
   const now = Math.floor(Date.now() / 1000);
   const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + TOKEN_TTL_SECONDS }));
+  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: crypto.randomUUID() }));
   return `${header}.${payload}.${sign(`${header}.${payload}`)}`;
 }
 
@@ -43,9 +46,18 @@ export function verifyToken(token: string): AuthUser | null {
     const actual = Buffer.from(signature);
     if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
     const value = JSON.parse(Buffer.from(payload, 'base64url').toString()) as TokenPayload;
-    if (value.exp <= Math.floor(Date.now() / 1000) || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
+    if (value.exp <= Math.floor(Date.now() / 1000) || !value.jti || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
     return { id: value.id, companyId: value.companyId, email: value.email, role: value.role, name: value.name };
   } catch { return null; }
+}
+
+export function createRefreshToken(): { token: string; hash: string } {
+  const token = crypto.randomBytes(48).toString('base64url');
+  return { token, hash: crypto.createHash('sha256').update(token).digest('hex') };
+}
+
+export function hashRefreshToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
