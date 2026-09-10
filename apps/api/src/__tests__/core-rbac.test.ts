@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { hasPermission, ROLE_PERMISSIONS, ROLES, validRole } from '../core/types.js';
+import { validRole } from '../core/auth.js';
+import { hasPermission, ROLE_PERMISSIONS, ROLES } from '../core/types.js';
 
 describe('CORE RBAC', () => {
   it('declares the complete role set', () => {
