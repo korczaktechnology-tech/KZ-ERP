@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { createToken, hashPassword, requireAuth, verifyPassword } from './auth.js';
 import type { Db } from 'mongodb';
+import { createToken, hashPassword, requireAuth, verifyPassword } from './auth.js';
+import type { AuditLog, CoreCompany, CoreUser } from './db.js';
 import { hasPermission } from './types.js';
 
 const loginSchema = z.object({ email: z.string().email().max(320), password: z.string().min(1).max(200) });
@@ -17,9 +18,9 @@ const bootstrapSchema = z.object({
 
 export function coreRouter(db: Db): Router {
   const router = Router();
-  const companies = db.collection('companies');
-  const users = db.collection('users');
-  const audit = db.collection('audit_logs');
+  const companies = db.collection<CoreCompany>('companies');
+  const users = db.collection<CoreUser>('users');
+  const audit = db.collection<AuditLog>('audit_logs');
 
   router.post('/auth/bootstrap', async (req, res, next) => {
     try {
