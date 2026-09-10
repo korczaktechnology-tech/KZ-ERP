@@ -2,6 +2,7 @@ import type { Db, Document, Filter, OptionalUnlessRequiredId, UpdateFilter } fro
 import type { ModuleCollectionMap } from './models.js';
 
 export function tenantFilter<T extends Document>(companyId: string, filter: Filter<T> = {}): Filter<T> {
+  if (!companyId.trim()) throw new Error('TENANT_ID_REQUIRED');
   return { ...filter, companyId } as Filter<T>;
 }
 
@@ -34,14 +35,16 @@ export function tenantCollection<T extends Document & { companyId: string }>(db:
 
 export async function ensureCoreCollections(db: Db): Promise<void> {
   const existing = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name));
-  for (const name of ['companies', 'users', 'audit_logs', 'auth_sessions']) {
+  for (const name of ['companies', 'users', 'audit_logs', 'auth_sessions', 'system']) {
     if (!existing.has(name)) await db.createCollection(name);
   }
 
-  await db.collection('users').createIndex({ companyId: 1, email: 1 }, { unique: true, name: 'users_company_email_unique' });
-  await db.collection('users').createIndex({ companyId: 1, role: 1 }, { name: 'users_company_role' });
-  await db.collection('audit_logs').createIndex({ companyId: 1, createdAt: -1 }, { name: 'audit_company_created' });
   await db.collection('companies').createIndex({ slug: 1 }, { unique: true, name: 'companies_slug_unique' });
+  await db.collection('users').createIndex({ companyId: 1, email: 1 }, { unique: true, name: 'users_company_email_unique' });
+  await db.collection('users').createIndex({ companyId: 1, active: 1, role: 1 }, { name: 'users_company_active_role' });
+  await db.collection('users').createIndex({ companyId: 1, createdAt: -1 }, { name: 'users_company_created' });
+  await db.collection('audit_logs').createIndex({ companyId: 1, createdAt: -1 }, { name: 'audit_company_created' });
+  await db.collection('audit_logs').createIndex({ companyId: 1, action: 1, createdAt: -1 }, { name: 'audit_company_action_created' });
   await db.collection('auth_sessions').createIndex({ tokenHash: 1 }, { unique: true, name: 'auth_sessions_token_unique' });
   await db.collection('auth_sessions').createIndex({ companyId: 1, userId: 1, expiresAt: 1 }, { name: 'auth_sessions_user_expiry' });
   await db.collection('auth_sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'auth_sessions_ttl' });
