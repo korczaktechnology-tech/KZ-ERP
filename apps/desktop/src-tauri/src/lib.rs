@@ -1,4 +1,4 @@
-use std::{env, fs, os::unix::fs::PermissionsExt, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 use sha2::{Digest, Sha256};
 
 #[tauri::command]
@@ -7,9 +7,7 @@ async fn install_update(asset_url: String, version: String, expected_sha256: Str
     if !asset_url.starts_with("https://") { return Err("invalid update URL".into()); }
     if expected_sha256.len() != 64 || !expected_sha256.chars().all(|c| c.is_ascii_hexdigit()) { return Err("invalid update digest".into()); }
 
-    let current = env::current_exe().map_err(|e| e.to_string())?;
-    let target = current.parent().ok_or("invalid executable path")?.join("kz-erp-desktop");
-    let temp = target.with_file_name(format!(".kz-erp-update-{}", version));
+    let temp = PathBuf::from(format!("/tmp/kz-erp-{}.deb", version));
     let response = reqwest::get(&asset_url).await.map_err(|e| format!("download: {e}"))?;
     if !response.status().is_success() { return Err(format!("download HTTP {}", response.status())); }
     let bytes = response.bytes().await.map_err(|e| format!("read download: {e}"))?;
@@ -18,11 +16,13 @@ async fn install_update(asset_url: String, version: String, expected_sha256: Str
     let actual = format!("{:x}", hasher.finalize());
     if actual != expected_sha256.to_ascii_lowercase() { return Err("update checksum mismatch".into()); }
     fs::write(&temp, &bytes).map_err(|e| format!("write update: {e}"))?;
-    let mut perms = fs::metadata(&temp).map_err(|e| e.to_string())?.permissions();
-    perms.set_mode(0o755); fs::set_permissions(&temp, perms).map_err(|e| e.to_string())?;
-    let temp_s = temp.to_string_lossy().to_string(); let target_s = target.to_string_lossy().to_string();
-    let script = "sleep 2; mv -- \"$1\" \"$2\"; chmod +x \"$2\"; exec \"$2\"";
-    Command::new("sh").arg("-c").arg(script).arg("kz-erp-updater").arg(&temp_s).arg(&target_s).spawn().map_err(|e| format!("start updater: {e}"))?;
+
+    let status = Command::new("pkexec").arg("dpkg").arg("-i").arg(&temp).status().map_err(|e| format!("start package installer: {e}"))?;
+    if !status.success() { let _ = fs::remove_file(&temp); return Err(format!("package installation failed: {status}")); }
+    let _ = fs::remove_file(&temp);
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    Command::new(&exe).spawn().map_err(|e| format!("restart application: {e}"))?;
     std::process::exit(0);
 }
 
