@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Db } from 'mongodb';
-import { createRefreshToken, createToken, hashPassword, hashRefreshToken, requireAuth, verifyPassword } from './auth.js';
+import { ACCESS_TOKEN_TTL_SECONDS, createRefreshToken, createToken, hashPassword, hashRefreshToken, requireAuth, verifyPassword } from './auth.js';
 import type { AuditLog, AuthSession, CoreCompany, CoreUser } from './db.js';
 import { hasPermission, type Role } from './types.js';
 import { created, fail, noContent, ok, paginated, parsePagination } from './api.js';
@@ -90,7 +90,7 @@ export function coreRouter(db: Db): Router {
       const company = await companies.findOne({ _id: user.companyId, active: true }, { projection: { _id: 1 } });
       if (!company) { fail(res, 401, 'UNAUTHORIZED', 'Tenant is inactive'); return; }
       const auth = await issueSession(user);
-      ok(res, { accessToken: auth.accessToken, refreshToken: auth.token, expiresIn: 60 * 60 * 8 });
+      ok(res, { accessToken: auth.accessToken, refreshToken: auth.token, expiresIn: ACCESS_TOKEN_TTL_SECONDS });
     } catch (error) { next(error); }
   });
 
@@ -105,7 +105,7 @@ export function coreRouter(db: Db): Router {
       if (!user || !company) { await sessions.deleteOne({ _id: session._id }); fail(res, 401, 'UNAUTHORIZED', 'Tenant is inactive'); return; }
       await sessions.deleteOne({ _id: session._id });
       const auth = await issueSession(user);
-      ok(res, { accessToken: auth.accessToken, refreshToken: auth.token, expiresIn: 60 * 60 * 8 });
+      ok(res, { accessToken: auth.accessToken, refreshToken: auth.token, expiresIn: ACCESS_TOKEN_TTL_SECONDS });
     } catch (error) { next(error); }
   });
 
