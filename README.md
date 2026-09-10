@@ -54,6 +54,8 @@ CORS_ORIGIN=http://localhost:1420
 
 ## Atualização
 
-O aplicativo consulta a Release mais recente de `korczaktechnology-tech/KZ-ERP`, compara a versão instalada com a tag da release e, quando existe versão mais nova compatível, baixa o AppImage publicado e realiza a substituição automática após validar o SHA-256.
+O aplicativo consulta a Release mais recente de `korczaktechnology-tech/KZ-ERP`, compara a versão instalada com a tag da release e, quando existe versão mais nova compatível, baixa o pacote `.deb` publicado e realiza a instalação automática após validar o SHA-256.
 
-A atualização é projetada para instalações por usuário em Linux. Instalações em diretórios protegidos pelo sistema exigem permissões adequadas.
+A atualização utiliza o gerenciador de pacotes Debian por meio de `pkexec`, solicitando autorização do usuário quando necessária.
+
+O token do GitHub não é distribuído no aplicativo desktop; quando o repositório ou as Releases forem privados, ele permanece exclusivamente no servidor da API.
