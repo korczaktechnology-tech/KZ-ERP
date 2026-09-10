@@ -1,4 +1,5 @@
 import type { Db, Document, Filter, OptionalUnlessRequiredId, UpdateFilter } from 'mongodb';
+import type { ModuleCollectionMap } from './models.js';
 
 export function tenantFilter<T extends Document>(companyId: string, filter: Filter<T> = {}): Filter<T> {
   return { ...filter, companyId } as Filter<T>;
@@ -44,6 +45,27 @@ export async function ensureCoreCollections(db: Db): Promise<void> {
   await db.collection('auth_sessions').createIndex({ tokenHash: 1 }, { unique: true, name: 'auth_sessions_token_unique' });
   await db.collection('auth_sessions').createIndex({ companyId: 1, userId: 1, expiresAt: 1 }, { name: 'auth_sessions_user_expiry' });
   await db.collection('auth_sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'auth_sessions_ttl' });
+}
+
+export async function ensureModuleCollections(db: Db): Promise<void> {
+  const definitions: Record<keyof ModuleCollectionMap, { indexes: Array<{ key: Document; options?: Parameters<ReturnType<Db['collection']>['createIndex']>[1] }> }> = {
+    products: { indexes: [{ key: { companyId: 1, sku: 1 }, options: { unique: true, name: 'products_company_sku_unique' } }, { key: { companyId: 1, active: 1 } }] },
+    customers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'customers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
+    suppliers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'suppliers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
+    warehouses: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'warehouses_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
+    stock_balances: { indexes: [{ key: { companyId: 1, warehouseId: 1, productId: 1 }, options: { unique: true, name: 'stock_company_warehouse_product_unique' } }, { key: { companyId: 1, productId: 1 } }] },
+    sales_orders: { indexes: [{ key: { companyId: 1, number: 1 }, options: { unique: true, name: 'sales_orders_company_number_unique' } }, { key: { companyId: 1, status: 1, createdAt: -1 } }, { key: { companyId: 1, customerId: 1, createdAt: -1 } }] },
+    financial_entries: { indexes: [{ key: { companyId: 1, type: 1, status: 1, dueDate: 1 } }, { key: { companyId: 1, reference: 1 } }] },
+    fiscal_documents: { indexes: [{ key: { companyId: 1, number: 1, series: 1 }, options: { unique: true, name: 'fiscal_company_number_series_unique' } }, { key: { companyId: 1, status: 1, issuedAt: -1 } }, { key: { companyId: 1, accessKey: 1 }, options: { sparse: true, unique: true, name: 'fiscal_access_key_unique' } }] },
+    people: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'people_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] }
+  };
+
+  const existing = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name));
+  for (const [name, definition] of Object.entries(definitions)) {
+    if (!existing.has(name)) await db.createCollection(name);
+    const collection = db.collection(name);
+    for (const index of definition.indexes) await collection.createIndex(index.key, index.options);
+  }
 }
 
 export type CoreCompany = {
