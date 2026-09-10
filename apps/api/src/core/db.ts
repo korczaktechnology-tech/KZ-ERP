@@ -1,7 +1,19 @@
-import type { Db, Document, Filter, OptionalUnlessRequiredId } from 'mongodb';
+import type { Db, Document, Filter, OptionalUnlessRequiredId, UpdateFilter } from 'mongodb';
 
 export function tenantFilter<T extends Document>(companyId: string, filter: Filter<T> = {}): Filter<T> {
   return { ...filter, companyId } as Filter<T>;
+}
+
+function assertTenantImmutable(update: Document): void {
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) { for (const item of value) visit(item); return; }
+    for (const [key, child] of Object.entries(value)) {
+      if (key === 'companyId') throw new Error('TENANT_ID_IMMUTABLE');
+      visit(child);
+    }
+  };
+  visit(update);
 }
 
 export function tenantCollection<T extends Document & { companyId: string }>(db: Db, name: string) {
@@ -11,7 +23,10 @@ export function tenantCollection<T extends Document & { companyId: string }>(db:
     find: (companyId: string, filter: Filter<T> = {}) => collection.find(tenantFilter(companyId, filter)),
     insertOne: (companyId: string, document: Omit<T, 'companyId'>) =>
       collection.insertOne({ ...document, companyId } as OptionalUnlessRequiredId<T>),
-    updateOne: (companyId: string, filter: Filter<T>, update: Document) => collection.updateOne(tenantFilter(companyId, filter), update),
+    updateOne: (companyId: string, filter: Filter<T>, update: UpdateFilter<T>) => {
+      assertTenantImmutable(update);
+      return collection.updateOne(tenantFilter(companyId, filter), update);
+    },
     deleteOne: (companyId: string, filter: Filter<T>) => collection.deleteOne(tenantFilter(companyId, filter))
   };
 }
