@@ -1,0 +1,48 @@
+name: Release Linux
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - name: Install frontend dependencies
+        working-directory: apps/desktop
+        run: npm install
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'KORCZAK ERP ${{ github.ref_name }}'
+          releaseBody: 'Release oficial do KORCZAK ERP para Linux.'
+          releaseDraft: false
+          prerelease: false
+          args: --bundles appimage,deb
+      - name: Generate checksums
+        run: |
+          mkdir -p release-checksums
+          sha256sum apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage > release-checksums/SHA256SUMS.txt
+      - name: Upload checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" release-checksums/SHA256SUMS.txt --clobber
