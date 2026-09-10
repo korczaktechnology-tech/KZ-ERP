@@ -16,6 +16,8 @@ const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(2
 const updateCompanySchema = z.object({ name: z.string().trim().min(2).max(120) });
 const refreshTtlMs = 30 * 24 * 60 * 60 * 1000;
 
+type BootstrapMarker = { _id: string; createdAt: Date };
+
 function publicUser(user: CoreUser) {
   return { id: String(user._id), email: user.email, name: user.name, role: user.role, active: user.active, createdAt: user.createdAt, updatedAt: user.updatedAt };
 }
@@ -26,7 +28,7 @@ export function coreRouter(db: Db): Router {
   const users = db.collection<CoreUser>('users');
   const audit = db.collection<AuditLog>('audit_logs');
   const sessions = db.collection<AuthSession>('auth_sessions');
-  const system = db.collection('system');
+  const system = db.collection<BootstrapMarker>('system');
 
   const tenantAuth = [requireAuth, async (_req: Parameters<typeof requireAuth>[0], res: Parameters<typeof requireAuth>[1], next: Parameters<typeof requireAuth>[2]) => {
     try {
