@@ -16,10 +16,10 @@ export type TenantContext = {
 
 export const ROLE_PERMISSIONS: Record<Role, string[]> = {
   owner: ['*'],
-  admin: ['company:read', 'company:write', 'users:read', 'users:write', 'audit:read'],
-  manager: ['company:read', 'users:read', 'audit:read'],
-  user: ['company:read'],
-  viewer: ['company:read']
+  admin: ['company:read', 'company:write', 'users:read', 'users:write', 'audit:read', 'master-data:read', 'master-data:write'],
+  manager: ['company:read', 'users:read', 'audit:read', 'master-data:read', 'master-data:write'],
+  user: ['company:read', 'master-data:read'],
+  viewer: ['company:read', 'master-data:read']
 };
 
 export function hasPermission(role: Role, permission: string): boolean {
