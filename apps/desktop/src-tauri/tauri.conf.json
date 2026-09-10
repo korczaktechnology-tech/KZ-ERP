@@ -4,6 +4,6 @@
   "version":"0.1.2",
   "identifier":"br.com.korczaktechnologies.erp",
   "build":{"beforeDevCommand":"npm run dev","devUrl":"http://localhost:1420","beforeBuildCommand":"npm run build","frontendDist":"../dist"},
-  "app":{"windows":[{"title":"KORCZAK ERP","label":"main","width":1440,"height":900,"minWidth":1050,"minHeight":700,"resizable":true}],"security":{"csp":null}},
+  "app":{"windows":[{"title":"KORCZAK ERP","label":"main","width":1440,"height":900,"minWidth":1050,"minHeight":700,"resizable":true,"decorations":false}],"security":{"csp":null}},
   "bundle":{"active":true,"targets":["deb"],"category":"Business","shortDescription":"KORCZAK ERP para Linux","longDescription":"Sistema de gestão empresarial da Korczak Technologies.","icon":["icons/32x32.png","icons/128x128.png","icons/128x128@2x.png","icons/icon.png"],"linux":{"deb":{"depends":[]}}}
 }
