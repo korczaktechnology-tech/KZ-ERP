@@ -12,5 +12,9 @@ services:
         value: ERP
       - key: CORS_ORIGIN
         sync: false
+      - key: AUTH_SECRET
+        sync: false
+      - key: CORE_BOOTSTRAP_KEY
+        sync: false
       - key: APP_VERSION
-        value: 0.1.0
+        value: 0.1.3
