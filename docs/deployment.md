@@ -24,7 +24,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-O GitHub Actions compila o desktop Linux, publica AppImage/DEB e envia `SHA256SUMS.txt` para a Release.
+O GitHub Actions compila o desktop Linux, publica exclusivamente o pacote `.deb` e envia `SHA256SUMS.txt` para a Release.
 
 ## 4. Atualização do desktop
 
@@ -39,15 +39,15 @@ Render consulta GitHub Releases
   ↓
 versão nova?
   ↓ sim
-asset AppImage + SHA-256
+asset .deb + SHA-256
   ↓
 download
   ↓
 SHA-256 validado localmente
   ↓
-substituição do AppImage
+pkexec dpkg -i
   ↓
-reinício
+reinício do aplicativo
 ```
 
 O token do GitHub nunca é distribuído no aplicativo desktop.
