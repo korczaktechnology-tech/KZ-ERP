@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser, Role } from './types.js';
 
-const TOKEN_TTL_SECONDS = 60 * 60 * 8;
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const getSecret = (): string => {
   const secret = process.env.AUTH_SECRET;
   if (!secret || secret.length < 32) throw new Error('AUTH_SECRET must be set and contain at least 32 characters');
@@ -34,7 +34,7 @@ export function verifyPassword(password: string, encoded: string): boolean {
 export function createToken(user: AuthUser): string {
   const now = Math.floor(Date.now() / 1000);
   const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: crypto.randomUUID() }));
+  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + ACCESS_TOKEN_TTL_SECONDS, jti: crypto.randomUUID() }));
   return `${header}.${payload}.${sign(`${header}.${payload}`)}`;
 }
 
