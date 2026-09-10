@@ -1,15 +1,16 @@
-import type { Collection, Db, Document, Filter, WithId } from 'mongodb';
+import type { Db, Document, Filter, OptionalUnlessRequiredId } from 'mongodb';
 
 export function tenantFilter<T extends Document>(companyId: string, filter: Filter<T> = {}): Filter<T> {
   return { ...filter, companyId } as Filter<T>;
 }
 
-export function tenantCollection<T extends Document>(db: Db, name: string) {
+export function tenantCollection<T extends Document & { companyId: string }>(db: Db, name: string) {
   const collection = db.collection<T>(name);
   return {
     findOne: (companyId: string, filter: Filter<T> = {}) => collection.findOne(tenantFilter(companyId, filter)),
     find: (companyId: string, filter: Filter<T> = {}) => collection.find(tenantFilter(companyId, filter)),
-    insertOne: (companyId: string, document: Omit<T, 'companyId'>) => collection.insertOne({ ...document, companyId } as T),
+    insertOne: (companyId: string, document: Omit<T, 'companyId'>) =>
+      collection.insertOne({ ...document, companyId } as OptionalUnlessRequiredId<T>),
     updateOne: (companyId: string, filter: Filter<T>, update: Document) => collection.updateOne(tenantFilter(companyId, filter), update),
     deleteOne: (companyId: string, filter: Filter<T>) => collection.deleteOne(tenantFilter(companyId, filter))
   };
