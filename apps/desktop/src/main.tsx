@@ -5,6 +5,7 @@ import { checkForUpdate } from './updater';
 
 type View = 'overview' | 'cadastros' | 'operacoes' | 'financeiro' | 'fiscal' | 'relatorios' | 'configuracoes';
 type Session = { accessToken: string; refreshToken: string; user?: { name?: string; email?: string; role?: string } };
+type ModuleData = { eyebrow: string; title: string; description: string; items: string[] };
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:10000';
 const nav: { id: View; label: string; icon: string }[] = [
@@ -85,8 +86,8 @@ function Dashboard({ apiStatus, session, onLogin }: { apiStatus: string; session
 function Metric({ label, value, detail, state }: { label: string; value: string; detail: string; state?: boolean }) { return <article className="metric"><small>{label}</small><strong>{value}</strong><span><i className={state ? 'dot online' : 'dot'} />{detail}</span></article>; }
 function Quick({ icon, title, text }: { icon: string; title: string; text: string }) { return <button className="quick"><span className="quick-icon">{icon}</span><span><strong>{title}</strong><small>{text}</small></span><b>→</b></button>; }
 
-function ModuleView({ view }: { view: View }) {
-  const data: Record<Exclude<View, 'overview'>, { eyebrow: string; title: string; description: string; items: string[] }> = {
+function ModuleView({ view }: { view: Exclude<View, 'overview'> }) {
+  const data: Record<Exclude<View, 'overview'>, ModuleData> = {
     cadastros: { eyebrow: 'DADOS MESTRES', title: 'Cadastros', description: 'Base central de produtos, clientes, fornecedores e depósitos.', items: ['Produtos', 'Clientes', 'Fornecedores', 'Depósitos'] },
     operacoes: { eyebrow: 'OPERAÇÃO', title: 'Operações', description: 'Pedidos e processos operacionais do ERP.', items: ['Pedidos de venda', 'Estoque', 'WMS', 'TMS'] },
     financeiro: { eyebrow: 'FINANCEIRO', title: 'Financeiro', description: 'Estrutura financeira preparada para contas e lançamentos.', items: ['Lançamentos', 'Contas a receber', 'Contas a pagar', 'Fluxo de caixa'] },
