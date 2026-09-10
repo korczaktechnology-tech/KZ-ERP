@@ -27,11 +27,36 @@ app.use(requestId);
 app.use(cors({ origin: CORS_ORIGIN === '*' ? true : CORS_ORIGIN.split(',').map(v => v.trim()) }));
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/health', async (_req, res) => {
-  try { await db.command({ ping: 1 }); res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: process.env.APP_VERSION ?? '0.1.0' }, requestId: res.locals.requestId }); }
-  catch { res.status(503).json({ error: { code: 'INTERNAL_ERROR', message: 'Database unavailable' }, requestId: res.locals.requestId }); }
+app.get('/health/live', (_req, res) => {
+  res.json({ data: { status: 'ok', service: 'kz-erp-api', check: 'live' }, requestId: res.locals.requestId });
 });
-app.get('/api/v1/system', (_req, res) => res.json({ data: { name: 'KORCZAK ERP', version: process.env.APP_VERSION ?? '0.1.0', integrationNamespaces: ['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS'] }, requestId: res.locals.requestId }));
+
+app.get('/health/ready', async (_req, res) => {
+  try {
+    await db.command({ ping: 1 });
+    res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: process.env.APP_VERSION ?? '0.1.3', check: 'ready' }, requestId: res.locals.requestId });
+  } catch {
+    res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
+  }
+});
+
+app.get('/health', async (_req, res) => {
+  try {
+    await db.command({ ping: 1 });
+    res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: process.env.APP_VERSION ?? '0.1.3' }, requestId: res.locals.requestId });
+  } catch {
+    res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
+  }
+});
+
+app.get('/api/v1/system', (_req, res) => res.json({
+  data: {
+    name: 'KORCZAK ERP',
+    version: process.env.APP_VERSION ?? '0.1.3',
+    integrationNamespaces: ['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS']
+  },
+  requestId: res.locals.requestId
+}));
 app.use('/api/v1', coreRouter(db));
 app.use('/api/v1/master-data', masterDataRouter(db));
 app.use('/api/v1/sales', salesRouter(db));
@@ -40,4 +65,5 @@ app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', messag
 app.use(errorMiddleware);
 const server = app.listen(PORT, () => console.log(`KZ-ERP API listening on :${PORT}`));
 const shutdown = async (signal: string) => { console.log(`${signal}: shutting down`); server.close(async () => { await mongo.close(); process.exit(0); }); };
-process.on('SIGTERM', () => void shutdown('SIGTERM')); process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
