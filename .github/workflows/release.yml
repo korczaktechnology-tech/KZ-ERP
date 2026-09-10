@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'SemVer version to build (for example 0.1.2)'
+        description: 'SemVer version to build (for example 0.1.3)'
         required: true
-        default: '0.1.2'
+        default: '0.1.3'
         type: string
 
 permissions:
@@ -68,7 +68,7 @@ jobs:
           fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "ERRO: versão inválida: $VERSION"
-            echo "Use SemVer no formato X.Y.Z, por exemplo 0.1.2."
+            echo "Use SemVer no formato X.Y.Z, por exemplo 0.1.3."
             exit 1
           fi
           VERSION="$VERSION" node -e "const fs=require('fs'); for(const f of ['package.json','src-tauri/tauri.conf.json']){const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\\n')}"
