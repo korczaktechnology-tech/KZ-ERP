@@ -147,7 +147,7 @@ export function coreRouter(db: Db): Router {
       const actor = res.locals.user as { id: string; companyId: string; role: Role };
       if (!hasPermission(actor.role, 'users:write')) { fail(res, 403, 'FORBIDDEN'); return; }
       const input = updateUserSchema.parse(req.body);
-      const target = await users.findOne({ _id: req.params.id, companyId: actor.companyId, active: true });
+      const target = await users.findOne({ _id: req.params.id, companyId: actor.companyId });
       if (!target) { fail(res, 404, 'NOT_FOUND', 'User not found'); return; }
       if (target.role === 'owner' && actor.role !== 'owner') { fail(res, 403, 'FORBIDDEN'); return; }
       if (input.active === false && target._id === actor.id) { fail(res, 400, 'VALIDATION_ERROR', 'You cannot deactivate your own account'); return; }
