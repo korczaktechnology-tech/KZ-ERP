@@ -49,6 +49,8 @@ export function coreRouter(db: Db): Router {
 
   router.post('/auth/bootstrap', async (req, res, next) => {
     let lockAcquired = false;
+    let createdCompanyId: string | undefined;
+    let createdUserId: string | undefined;
     try {
       const input = bootstrapSchema.parse(req.body);
       const key = process.env.CORE_BOOTSTRAP_KEY;
@@ -60,15 +62,23 @@ export function coreRouter(db: Db): Router {
       const now = new Date();
       const companyId = randomUUID();
       const userId = randomUUID();
+      createdCompanyId = companyId;
+      createdUserId = userId;
       await companies.insertOne({ _id: companyId, name: input.companyName, slug: input.slug, active: true, createdAt: now, updatedAt: now });
       const user: CoreUser = { _id: userId, companyId, email: input.email.toLowerCase(), name: input.name, passwordHash: hashPassword(input.password), role: 'owner', active: true, createdAt: now, updatedAt: now };
       await users.insertOne(user);
       await audit.insertOne({ companyId, actorUserId: userId, action: 'core.bootstrap', resource: 'company', resourceId: companyId, createdAt: now });
       const auth = await issueSession(user);
-      await system.deleteOne({ _id: 'bootstrap' });
       lockAcquired = false;
+      await system.deleteOne({ _id: 'bootstrap' }).catch(() => undefined);
       created(res, { accessToken: auth.accessToken, refreshToken: auth.token, companyId, userId });
     } catch (error) {
+      if (createdUserId) {
+        await sessions.deleteMany({ userId: createdUserId }).catch(() => undefined);
+        await audit.deleteMany({ companyId: createdCompanyId }).catch(() => undefined);
+        await users.deleteOne({ _id: createdUserId }).catch(() => undefined);
+      }
+      if (createdCompanyId) await companies.deleteOne({ _id: createdCompanyId }).catch(() => undefined);
       if (lockAcquired) await system.deleteOne({ _id: 'bootstrap' }).catch(() => undefined);
       next(error);
     }
