@@ -23,7 +23,7 @@ export function hashPassword(password: string): string {
 export function verifyPassword(password: string, encoded: string): boolean {
   try {
     const [salt, expected] = encoded.split(':');
-    if (!salt || !expected) return false;
+    if (!salt || !expected || !/^[0-9a-f]+$/i.test(expected)) return false;
     const actual = crypto.scryptSync(password, salt, 64).toString('hex');
     const expectedBuffer = Buffer.from(expected, 'hex');
     const actualBuffer = Buffer.from(actual, 'hex');
@@ -41,12 +41,12 @@ export function createToken(user: AuthUser): string {
 export function verifyToken(token: string): AuthUser | null {
   try {
     const [header, payload, signature] = token.split('.');
-    if (!header || !payload || !signature) return null;
+    if (!header || !payload || !signature || token.split('.').length !== 3) return null;
     const expected = Buffer.from(sign(`${header}.${payload}`));
     const actual = Buffer.from(signature);
     if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
     const value = JSON.parse(Buffer.from(payload, 'base64url').toString()) as TokenPayload;
-    if (value.exp <= Math.floor(Date.now() / 1000) || !value.jti || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
+    if (value.exp <= Math.floor(Date.now() / 1000) || !Number.isInteger(value.iat) || !value.jti || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
     return { id: value.id, companyId: value.companyId, email: value.email, role: value.role, name: value.name };
   } catch { return null; }
 }
@@ -62,8 +62,12 @@ export function hashRefreshToken(token: string): string {
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.header('authorization');
-  const user = header?.startsWith('Bearer ') ? verifyToken(header.slice(7)) : null;
-  if (!user) { res.status(401).json({ error: 'UNAUTHORIZED' }); return; }
+  const value = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const user = value ? verifyToken(value) : null;
+  if (!user) {
+    res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' }, requestId: res.locals.requestId });
+    return;
+  }
   res.locals.user = user;
   next();
 }
