@@ -1,6 +1,6 @@
 [package]
 name = "kz-erp"
-version = "0.1.0"
+version = "0.1.1"
 description = "KORCZAK ERP Linux Desktop"
 authors = ["Korczak Technologies"]
 edition = "2021"
