@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import type { Collection } from 'mongodb';
 import type { AuthUser, Role } from './types.js';
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 8;
@@ -19,10 +18,14 @@ export function hashPassword(password: string): string {
 }
 
 export function verifyPassword(password: string, encoded: string): boolean {
-  const [salt, expected] = encoded.split(':');
-  if (!salt || !expected) return false;
-  const actual = crypto.scryptSync(password, salt, 64).toString('hex');
-  return crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+  try {
+    const [salt, expected] = encoded.split(':');
+    if (!salt || !expected) return false;
+    const actual = crypto.scryptSync(password, salt, 64).toString('hex');
+    const expectedBuffer = Buffer.from(expected, 'hex');
+    const actualBuffer = Buffer.from(actual, 'hex');
+    return expectedBuffer.length === actualBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+  } catch { return false; }
 }
 
 export function createToken(user: AuthUser): string {
@@ -35,9 +38,12 @@ export function createToken(user: AuthUser): string {
 export function verifyToken(token: string): AuthUser | null {
   try {
     const [header, payload, signature] = token.split('.');
-    if (!header || !payload || !signature || !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(sign(`${header}.${payload}`)))) return null;
+    if (!header || !payload || !signature) return null;
+    const expected = Buffer.from(sign(`${header}.${payload}`));
+    const actual = Buffer.from(signature);
+    if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return null;
     const value = JSON.parse(Buffer.from(payload, 'base64url').toString()) as TokenPayload;
-    if (value.exp <= Math.floor(Date.now() / 1000) || !value.id || !value.companyId || !value.email || !value.role) return null;
+    if (value.exp <= Math.floor(Date.now() / 1000) || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
     return { id: value.id, companyId: value.companyId, email: value.email, role: value.role, name: value.name };
   } catch { return null; }
 }
@@ -50,26 +56,6 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   next();
 }
 
-export function userFromRequest(req: Request): AuthUser {
-  return resUser(req.res?.locals.user);
-}
-
-function resUser(value: unknown): AuthUser {
-  return value as AuthUser;
-}
-
 export function validRole(value: unknown): value is Role {
   return value === 'owner' || value === 'admin' || value === 'manager' || value === 'user' || value === 'viewer';
 }
-
-export type UserCollection = Collection<{
-  _id: string;
-  companyId: string;
-  email: string;
-  name: string;
-  passwordHash: string;
-  role: Role;
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}>;
