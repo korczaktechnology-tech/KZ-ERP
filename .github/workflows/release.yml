@@ -32,7 +32,7 @@ jobs:
         working-directory: apps/desktop
         run: npm install
 
-      - name: Set release version
+      - name: Set package version
         working-directory: apps/desktop
         env:
           RELEASE_VERSION: ${{ github.ref_name }}
@@ -42,14 +42,14 @@ jobs:
           else
             VERSION="0.1.0"
           fi
-          node -e "const fs=require('fs'); for(const f of ['package.json','src-tauri/tauri.conf.json']){const p=JSON.parse(fs.readFileSync(f));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\\n')}" 
+          node -e "const fs=require('fs'); for(const f of ['package.json','src-tauri/tauri.conf.json']){const p=JSON.parse(fs.readFileSync(f));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\\n')}"
           sed -i -E "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 
       - name: Generate application icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/icon.svg
 
-      - name: Build Linux package
+      - name: Build Linux .deb
         working-directory: apps/desktop
         env:
           VITE_APP_VERSION: ${{ github.ref_name }}
@@ -57,18 +57,34 @@ jobs:
           VITE_UPDATE_API_URL: https://kz-erp-api.onrender.com
         run: npm run tauri build -- --bundles deb
 
-      - name: Generate checksums
+      - name: Verify Debian package
         run: |
-          mkdir -p release-checksums
-          sha256sum apps/desktop/src-tauri/target/release/bundle/deb/*.deb > release-checksums/SHA256SUMS.txt
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(apps/desktop/src-tauri/target/release/bundle/deb/*.deb)
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "ERRO: esperado exatamente 1 arquivo .deb; encontrados ${#packages[@]}"
+            printf '%s\n' "${packages[@]}"
+            exit 1
+          fi
+          file "${packages[0]}"
+          dpkg-deb --info "${packages[0]}"
+          dpkg-deb --contents "${packages[0]}" >/dev/null
 
-      - name: Upload Linux package artifact
+      - name: Prepare artifact
+        run: |
+          set -euo pipefail
+          rm -rf release-artifact
+          mkdir -p release-artifact
+          cp apps/desktop/src-tauri/target/release/bundle/deb/*.deb release-artifact/KORCZAK-ERP-linux-amd64.deb
+          sha256sum release-artifact/KORCZAK-ERP-linux-amd64.deb > release-artifact/SHA256SUMS.txt
+          ls -lh release-artifact/
+
+      - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kz-erp-linux-deb-${{ github.sha }}
-          path: |
-            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
-            release-checksums/SHA256SUMS.txt
+          name: KORCZAK-ERP-linux-deb-${{ github.sha }}
+          path: release-artifact/
           if-no-files-found: error
           retention-days: 14
 
@@ -89,8 +105,8 @@ jobs:
           prerelease: false
           args: --bundles deb
 
-      - name: Upload checksums to GitHub Release
+      - name: Upload checksum to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" release-checksums/SHA256SUMS.txt --clobber
+        run: gh release upload "${{ github.ref_name }}" release-artifact/SHA256SUMS.txt --clobber
