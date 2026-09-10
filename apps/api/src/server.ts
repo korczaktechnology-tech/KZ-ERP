@@ -7,6 +7,7 @@ import { ensureCoreCollections, ensureModuleCollections } from './core/db.js';
 import { coreRouter } from './core/routes.js';
 import { errorMiddleware, requestId } from './core/api.js';
 import { masterDataRouter } from './modules/master-data/routes.js';
+import { ensureMasterDataCollections } from './modules/master-data/collections.js';
 import { salesRouter } from './modules/sales/routes.js';
 
 const PORT = Number(process.env.PORT ?? 10000);
@@ -29,6 +30,7 @@ await mongo.connect();
 const db = mongo.db(MONGODB_DB);
 await ensureCoreCollections(db);
 await ensureModuleCollections(db);
+await ensureMasterDataCollections(db);
 
 const app = express();
 app.disable('x-powered-by');
