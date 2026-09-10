@@ -1,4 +1,4 @@
-# KZ-ERP API contract — F1 Core
+# KZ-ERP API contract — F2 Dados mestre
 
 The public API is versioned under `/api/v1` and uses JSON envelopes.
 
@@ -36,7 +36,59 @@ All routes below require an authenticated, active user and active company.
 - `PATCH /api/v1/core/users/:id` — updates name, role, active state or resets password; requires `users:write`.
 - `GET /api/v1/core/audit` — paginated tenant-scoped audit history; requires `audit:read`.
 
-The API never returns password hashes to clients. User writes are audited. Owner accounts cannot be deactivated or demoted; administrators cannot manage the owner account.
+## F2 Master Data
+
+All F2 routes require an authenticated active tenant. Read operations require `master-data:read`; write operations require `master-data:write`.
+
+### Parties
+
+- `GET /api/v1/master-data/parties` — paginated unified party registry.
+- `GET /api/v1/master-data/parties/:id` — party detail.
+- `POST /api/v1/master-data/parties` — create a person/company party with one or more roles.
+- `PATCH /api/v1/master-data/parties/:id` — update party data.
+- `DELETE /api/v1/master-data/parties/:id` — logical deactivation; linked addresses are deactivated.
+
+### Addresses
+
+- `GET /api/v1/master-data/parties/:partyId/addresses` — addresses belonging to one party.
+- `POST /api/v1/master-data/parties/:partyId/addresses` — create an address for a party.
+- `PATCH /api/v1/master-data/addresses/:id` — update an address.
+- `DELETE /api/v1/master-data/addresses/:id` — logical deactivation.
+
+Address types: `billing`, `shipping`, `commercial`, `residential`, `other`.
+
+### Products
+
+- `GET /api/v1/master-data/products` — paginated product list.
+- `POST /api/v1/master-data/products` — create product; SKU is unique inside the tenant.
+- `PATCH /api/v1/master-data/products/:id` — update product.
+- `DELETE /api/v1/master-data/products/:id` — logical deactivation.
+
+### Units
+
+- `GET /api/v1/master-data/units` — paginated units of measure.
+- `POST /api/v1/master-data/units` — create unit.
+- `PATCH /api/v1/master-data/units/:id` — update unit.
+- `DELETE /api/v1/master-data/units/:id` — logical deactivation.
+
+Unit kinds: `unit`, `weight`, `volume`, `length`, `area`, `time`, `other`.
+
+### Price lists and prices
+
+- `GET /api/v1/master-data/price-lists` — paginated price-list catalog.
+- `POST /api/v1/master-data/price-lists` — create a price list.
+- `PATCH /api/v1/master-data/price-lists/:id` — update a price list.
+- `DELETE /api/v1/master-data/price-lists/:id` — logical deactivation and deactivation of its prices.
+- `GET /api/v1/master-data/price-lists/:priceListId/prices` — list prices belonging to a list.
+- `POST /api/v1/master-data/price-lists/:priceListId/prices` — create a product price.
+- `PATCH /api/v1/master-data/prices/:id` — update amount, minimum quantity or active state.
+- `DELETE /api/v1/master-data/prices/:id` — logical deactivation.
+
+Price amounts are stored as BSON `Decimal128` and accepted by the API as decimal strings, e.g. `"19.90"`, to preserve monetary precision.
+
+## Compatibility master-data endpoints
+
+The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` endpoints remain available for the current sales/desktop flow. They are tenant-isolated and now protected by the same F2 permissions. The unified `parties` model is the canonical F2 master for new integrations.
 
 ## Tenant isolation
 
@@ -52,5 +104,3 @@ Every tenant-owned collection access must bind `companyId` from the authenticate
 - Pagination uses explicit `limit` and `offset` where applicable.
 - Password hashes, refresh-token values and other authentication secrets are never returned by API responses.
 - Mutating critical operations must gain idempotency support before production use where retries could create duplicate business effects.
-
-This document is the F1 Core contract baseline. Module-specific contracts must be added when each domain is implemented.
