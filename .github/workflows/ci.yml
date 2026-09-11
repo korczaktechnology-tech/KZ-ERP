@@ -84,36 +84,17 @@ jobs:
           test "${#packages[@]}" -eq 1
           dpkg-deb --info "${packages[0]}"
           dpkg-deb --contents "${packages[0]}" >/dev/null
-  postgres-schema:
-    name: PostgreSQL schema integration validation
+  mongo-config:
+    name: MongoDB configuration validation
     runs-on: ubuntu-22.04
-    services:
-      postgres:
-        image: postgres:18.6
-        env:
-          POSTGRES_PASSWORD: ci_password
-          POSTGRES_DB: erp_ci
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd="pg_isready -U postgres -d erp_ci"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
     steps:
       - uses: actions/checkout@v4
-      - name: Install PostgreSQL client
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
-      - name: Apply schema
-        env:
-          PGPASSWORD: ci_password
+      - name: Verify MongoDB is the only application database configuration
         run: |
           set -euo pipefail
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/000_extensions.sql
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/001_enterprise_core.sql
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/002_audit_trigger_hardening.sql
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "INSERT INTO erp.tenant(legal_name,trade_name,tax_id) VALUES ('CI Empresa','CI Empresa','CI-001') RETURNING id;"
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_policies WHERE schemaname='erp';"
-          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "SELECT extname FROM pg_extension WHERE extname IN ('pgcrypto','citext') ORDER BY extname;"
+          ! grep -RniE 'postgres|postgresql|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD' \
+            --exclude-dir=.git --exclude='*.lock' .
+          grep -Rni 'MONGODB_URI' apps/api infra render.yaml
   infrastructure:
     name: Infrastructure validation
     runs-on: ubuntu-22.04
