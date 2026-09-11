@@ -23,6 +23,7 @@ export type StockMovement = {
   direction?: 'increase' | 'decrease';
   reason?: string;
   reference?: string;
+  idempotencyKey?: string;
   actorUserId: string;
   createdAt: Date;
 };
@@ -34,6 +35,7 @@ export type StockReservation = {
   warehouseId: string;
   quantity: Decimal128;
   reference?: string;
+  idempotencyKey?: string;
   active: boolean;
   actorUserId: string;
   createdAt: Date;
