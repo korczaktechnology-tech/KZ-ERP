@@ -6,7 +6,8 @@ Companion to the Architecture 1.0 master document dated 2026-09-10.
 
 - Desktop: Tauri 2 + React + TypeScript.
 - API: Node.js + Express + TypeScript.
-- Current persistence implementation: MongoDB.
+- Official persistence: MongoDB.
+- Official database name in the current environment: `ERP`.
 - Deployment: Render.
 - CI and releases: GitHub Actions.
 - Public API prefix: `/api/v1`.
@@ -14,6 +15,12 @@ Companion to the Architecture 1.0 master document dated 2026-09-10.
 - Readiness endpoint: `/health/ready`.
 - Compatibility health endpoint: `/health`.
 - System endpoint: `/api/v1/system`.
+
+## Database decision — definitive
+
+MongoDB is the official persistence technology for KORCZAK ERP. PostgreSQL is not part of the product stack and must not be reintroduced into runtime code, infrastructure, CI/CD, environment variables, deployment manifests or documentation as an implementation dependency.
+
+New modules must use the established MongoDB foundation, including tenant-scoped `companyId`, centralized collection/index provisioning, appropriate MongoDB transactions, exact monetary types where applicable, and the existing API/outbox/audit boundaries.
 
 ## Boundary
 
@@ -45,10 +52,6 @@ Desktop code communicates with the API over HTTPS and never connects directly to
 11. API responses never expose password hashes or refresh-token secrets.
 12. API documentation describes the complete Core contract and security invariants.
 13. Automated checks must remain green on the final F1 commit.
-
-## Migration gate
-
-Architecture 1.0 specifies PostgreSQL as the target transactional database. The current implementation still uses MongoDB because the project's explicit implementation decision is MongoDB. PostgreSQL migration remains a future architectural/data gate and is not introduced by F1.
 
 ## Phase map
 
