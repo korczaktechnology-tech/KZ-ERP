@@ -15,12 +15,19 @@ Companion to the Architecture 1.0 master document dated 2026-09-10.
 - Readiness endpoint: `/health/ready`.
 - Compatibility health endpoint: `/health`.
 - System endpoint: `/api/v1/system`.
+- F0–F7 integration registry: `apps/api/src/core/integration.ts`.
 
 ## Database decision — definitive
 
-MongoDB is the official persistence technology for KORCZAK ERP. PostgreSQL is not part of the product stack and must not be reintroduced into runtime code, infrastructure, CI/CD, environment variables, deployment manifests or documentation as an implementation dependency.
+MongoDB is the official persistence technology for KORCZAK ERP. PostgreSQL is not part of the product stack and must not be reintroduced into runtime code, infrastructure, CI/CD, environment variables or deployment manifests as an implementation dependency.
 
 New modules must use the established MongoDB foundation, including tenant-scoped `companyId`, centralized collection/index provisioning, appropriate MongoDB transactions, exact monetary types where applicable, and the existing API/outbox/audit boundaries.
+
+## Cross-phase integration rule
+
+F0–F7 is one ERP chain, but modules remain bounded domains. A downstream module consumes a published contract/event rather than importing another module's MongoDB collections or business implementation. The canonical registry is versioned and exposed through `/api/v1/system` so Desktop, automated tests and future KOS products can use the same namespace and contract metadata.
+
+The current registry distinguishes `connected` flows from `contract-ready` flows. `contract-ready` is deliberately not presented as completed business automation; it is the stable integration boundary that must be wired during the corresponding completion gate.
 
 ## Boundary
 
@@ -56,3 +63,7 @@ Desktop code communicates with the API over HTTPS and never connects directly to
 ## Phase map
 
 F0 Foundation → F1 Core → F2 Master Data → F3 Stock → F4 Sales/CRM → F5 SCM → F6 Finance → F7 Logistics → F8 Flow → F9 Documents/Audit → F10 Specialized Operations → F11 BI/Analytics → F12 Connect → F13 KOS → F14 AI/IoT → F15 Hardening.
+
+## F0–F7 synchronization gate
+
+The detailed completion gate and remaining items are maintained in `docs/f0-f7-integration-status.md`. No phase is declared ≥90% solely from code presence: the gate also requires tests, real Desktop/API round-trips, integration wiring, CI green and explicit external-dependency handling.
