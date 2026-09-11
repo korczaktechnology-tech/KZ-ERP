@@ -25,14 +25,18 @@ if (!CORS_ORIGIN) throw new Error('CORS_ORIGIN is required');
 const configuredCorsOrigins = CORS_ORIGIN.split(',').map(v => v.trim()).filter(Boolean);
 if (configuredCorsOrigins.length === 0 || configuredCorsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
 
-// Tauri production webviews use a tauri.localhost origin. Keep the configured
-// browser origins strict, but always allow the first-party desktop shell.
+// Tauri 2 can identify the desktop WebView with tauri.localhost in production,
+// while development may use localhost, 127.0.0.1, or the legacy tauri:// origin.
+// These are first-party desktop origins only; arbitrary websites remain blocked.
 const desktopOrigins = new Set([
   'http://tauri.localhost',
   'https://tauri.localhost',
+  'tauri://localhost',
   'http://localhost:1420',
 ]);
+const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const corsOrigins = new Set([...configuredCorsOrigins, ...desktopOrigins]);
+const isAllowedOrigin = (origin: string) => corsOrigins.has(origin) || localhostOriginPattern.test(origin);
 
 const mongo = new MongoClient(MONGODB_URI, {
   serverSelectionTimeoutMS: 5000,
@@ -48,7 +52,7 @@ app.disable('x-powered-by');
 app.use(requestId);
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || corsOrigins.has(origin)) return callback(null, true);
+    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
     return callback(new Error('CORS origin not allowed'));
   },
 }));
@@ -107,10 +111,12 @@ const databaseRequired = (_req: express.Request, res: express.Response, next: ex
   });
 };
 
+// Keep updater endpoints outside the database readiness gate: the desktop must
+// still be able to discover/install a release when MongoDB is unavailable.
+app.use('/api/v1/updates', updates);
 app.use('/api/v1', databaseRequired, coreRouter(db));
 app.use('/api/v1/master-data', databaseRequired, masterDataRouter(db));
 app.use('/api/v1/sales', databaseRequired, salesRouter(db));
-app.use('/api/v1/updates', updates);
 app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found' }, requestId: res.locals.requestId }));
 app.use(errorMiddleware);
 
