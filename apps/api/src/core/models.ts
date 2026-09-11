@@ -2,7 +2,7 @@ import type { Document, Decimal128 } from 'mongodb';
 
 export type Id = string;
 export type BaseDocument = { _id?: Id; companyId: Id; createdAt: Date; updatedAt: Date };
-export type Product = BaseDocument & { sku: string; name: string; description?: string; active: boolean; unit: string; price: number };
+export type Product = BaseDocument & { sku: string; name: string; description?: string; active: boolean; unit: string; price: Decimal128 };
 export type Customer = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
 export type Supplier = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
 export type Warehouse = BaseDocument & { code: string; name: string; active: boolean };
