@@ -1,4 +1,4 @@
-# KZ-ERP API contract — F2/F3
+# KZ-ERP API contract — F0/F1/F2/F3/F4/F5
 
 The public API is versioned under `/api/v1` and uses JSON envelopes.
 
@@ -21,9 +21,11 @@ Returns application name, version and integration namespaces.
 - `POST /api/v1/auth/bootstrap` — one-time creation of the first company and owner account; protected by server-side `CORE_BOOTSTRAP_KEY`.
 - `POST /api/v1/auth/login` — creates an access/refresh session.
 - `POST /api/v1/auth/refresh` — rotates the refresh session and invalidates the previous refresh token.
-- `POST /api/v1/auth/logout` — revokes the supplied refresh session.
+- `POST /api/v1/auth/logout` — revokes the supplied refresh session and its access session.
 - `POST /api/v1/auth/change-password` — changes the authenticated user's password and revokes that user's sessions.
 - `GET /api/v1/core/me` — authenticated identity and tenant context.
+
+All authenticated API routes require an active access session; revoked sessions are rejected immediately.
 
 ## Core administration
 
@@ -64,6 +66,8 @@ Address types: `billing`, `shipping`, `commercial`, `residential`, `other`.
 - `PATCH /api/v1/master-data/products/:id` — update product.
 - `DELETE /api/v1/master-data/products/:id` — logical deactivation.
 
+Product prices use BSON `Decimal128` and are accepted/exposed as decimal strings to preserve monetary precision.
+
 ### Units
 
 - `GET /api/v1/master-data/units` — paginated units of measure.
@@ -84,38 +88,56 @@ Unit kinds: `unit`, `weight`, `volume`, `length`, `area`, `time`, `other`.
 - `PATCH /api/v1/master-data/prices/:id` — update amount, minimum quantity or active state.
 - `DELETE /api/v1/master-data/prices/:id` — logical deactivation.
 
-Price amounts are stored as BSON `Decimal128` and accepted by the API as decimal strings, e.g. `"19.90"`, to preserve monetary precision.
-
 ## F3 Stock
 
 All F3 routes require an authenticated active tenant. Read operations require `stock:read`; write operations require `stock:write`.
 
-### Warehouses
+### Warehouses and balances
 
 - `GET /api/v1/stock/warehouses` — active warehouses available to the current tenant.
-
-Warehouse creation/editing remains in the F2 compatibility master-data contract; F3 consumes those canonical warehouse records.
-
-### Balances
-
 - `GET /api/v1/stock/balances` — paginated balances, optionally filtered by `warehouseId` and/or `productId`.
 - `PATCH /api/v1/stock/balances/:warehouseId/:productId/minimum` — changes the minimum stock threshold.
-- `GET /api/v1/stock/summary` — operational totals and count of balances at or below minimum.
-
-Balance quantities are BSON `Decimal128`. API responses expose them as decimal strings. `availableQuantity = quantity - reservedQuantity`.
+- `GET /api/v1/stock/summary` — exact-precision operational totals and count of balances at or below minimum.
 
 ### Movements
 
 - `GET /api/v1/stock/movements` — paginated movement ledger; optional filters `productId`, `warehouseId`, `type`.
 - `POST /api/v1/stock/movements` — records `receipt`, `issue`, `adjustment` or `transfer`.
 
-A reduction is rejected with HTTP 409 when it would make available stock negative. Transfers require distinct source/destination warehouses.
+Quantities are BSON `Decimal128` and API responses use decimal strings. A reduction is rejected with HTTP 409 when available stock would become negative. Transfers require distinct source/destination warehouses. `Idempotency-Key` is supported for mutation retries.
 
 ### Reservations
 
 - `GET /api/v1/stock/reservations` — active reservations, optionally filtered by product/warehouse.
-- `POST /api/v1/stock/reservations` — reserves available stock.
+- `POST /api/v1/stock/reservations` — reserves available stock; supports `Idempotency-Key`.
 - `DELETE /api/v1/stock/reservations/:id` — releases an active reservation.
+
+## F4 Sales
+
+All F4 routes require an authenticated active tenant. Read operations require `sales:read`; writes require `sales:write`.
+
+- `GET /api/v1/sales/orders` — paginated order list; filters include `status` and `customerId`.
+- `GET /api/v1/sales/orders/:id` — tenant-scoped order detail.
+- `POST /api/v1/sales/orders` — creates a `draft` order; supports `Idempotency-Key`.
+- `PATCH /api/v1/sales/orders/:id` — edits customer/lines while the order is `draft`.
+- `POST /api/v1/sales/orders/:id/confirm` — transitions `draft` to `confirmed`.
+- `POST /api/v1/sales/orders/:id/cancel` — transitions `draft` or `confirmed` to `cancelled`.
+
+Quantities use up to 6 decimal places; prices, line totals and order totals use BSON `Decimal128` with deterministic cent rounding. Customer and products must belong to the authenticated tenant and be active. Reusing an idempotency key with a different payload returns `409 CONFLICT`.
+
+## F5 Finance
+
+All F5 routes require an authenticated active tenant. Read operations require `finance:read`; writes require `finance:write`.
+
+- `GET /api/v1/finance/entries` — paginated receivable/payable entries; filters `type` and `status`.
+- `GET /api/v1/finance/entries/:id` — tenant-scoped entry detail.
+- `POST /api/v1/finance/entries` — creates an open receivable or payable; supports `Idempotency-Key`.
+- `PATCH /api/v1/finance/entries/:id` — edits an open entry.
+- `POST /api/v1/finance/entries/:id/pay` — marks an open entry as paid.
+- `POST /api/v1/finance/entries/:id/cancel` — cancels an open entry.
+- `GET /api/v1/finance/summary` — exact open/overdue receivable and payable totals.
+
+Amounts are BSON `Decimal128` and exposed as decimal strings. Financial mutations pair state changes and audit records inside MongoDB transactions.
 
 ## Compatibility master-data endpoints
 
@@ -123,15 +145,17 @@ The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` end
 
 ## Tenant isolation
 
-Every tenant-owned collection access must bind `companyId` from the authenticated context. The persistence helper overwrites caller-supplied `companyId` filters with the authenticated tenant and rejects attempts to mutate `companyId`. Tenant-scoped unique indexes prevent collisions between records of different companies while allowing identical business identifiers across companies.
+Every tenant-owned collection access binds `companyId` from the authenticated context. The persistence helper overwrites caller-supplied `companyId` filters with the authenticated tenant and rejects attempts to mutate `companyId`. Tenant-scoped unique indexes prevent collisions between records of different companies while allowing identical business identifiers across companies.
 
 ## Contract rules
 
 - JSON request/response bodies.
 - Protected endpoints use `Authorization: Bearer <access-token>`.
+- Protected endpoints also require the access token's active server-side session.
 - Validation happens at the API boundary with Zod.
 - Errors use `{ error: { code, message, details? }, requestId }`.
 - Duplicate-key conflicts return HTTP 409 instead of leaking database errors.
 - Pagination uses explicit `limit` and `offset` where applicable.
-- Password hashes, refresh-token values and other authentication secrets are never returned by API responses.
-- Mutating critical operations must gain idempotency support before production use where retries could create duplicate business effects.
+- Password hashes, refresh-token values, session identifiers and other authentication secrets are never returned by API responses.
+- Critical retriable mutations use UUID `Idempotency-Key` where specified.
+- Monetary values are never converted through JavaScript floating-point arithmetic.
