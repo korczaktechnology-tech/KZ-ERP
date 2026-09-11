@@ -10,11 +10,11 @@ O projeto segue o documento mestre **Arquitetura 1.0 — 10/09/2026**. A impleme
 
 - Desktop Linux: Tauri 2 + React + TypeScript.
 - API: Node.js + Express + TypeScript.
-- Persistência atual: MongoDB.
-- Banco alvo da Arquitetura 1.0: PostgreSQL; migração registrada em ADR e obrigatória antes do Core/data foundation ser considerado alinhado.
+- Persistência oficial: MongoDB.
+- Database padrão do ambiente: `ERP`.
+- O desktop nunca acessa o banco diretamente; toda comunicação passa pela API HTTPS.
 - GitHub: código, CI/CD e Releases.
 - Render: hospedagem da API.
-- Comunicação desktop/API: HTTPS; o desktop não acessa o banco diretamente.
 - Atualização: GitHub Releases + SHA-256 + instalação Debian via `pkexec`.
 
 ## Estrutura
@@ -23,7 +23,7 @@ O projeto segue o documento mestre **Arquitetura 1.0 — 10/09/2026**. A impleme
 KZ-ERP/
 ├── apps/
 │   ├── desktop/       # Tauri + React + TypeScript
-│   └── api/           # Node.js + Express + MongoDB (transitório)
+│   └── api/           # Node.js + Express + TypeScript + MongoDB
 ├── docs/
 │   ├── adr/
 │   ├── api/
@@ -62,13 +62,15 @@ Variáveis da API ficam em `apps/api/.env.example`. Nunca coloque valores reais 
 
 ## CI
 
-Cada push em `main` e cada pull request para `main` executa verificação TypeScript, testes e build da API, build do desktop e validação do pacote Linux `.deb`.
+Cada push em `main` e cada pull request para `main` executa verificação TypeScript, testes e build da API, build do desktop, validação do pacote Linux `.deb`, validação da configuração MongoDB e validação da infraestrutura.
 
 O workflow de Release Linux continua responsável por publicar releases em tags `vX.Y.Z`.
 
 ## Operação
 
 - `GET /health` valida API e dependência de banco.
+- `GET /health/live` valida disponibilidade do processo.
+- `GET /health/ready` valida disponibilidade da API e MongoDB.
 - `GET /api/v1/system` expõe versão e namespaces de integração.
 - `GET /api/v1/core/me` valida a identidade autenticada.
 
@@ -81,3 +83,7 @@ Configure `CORE_BOOTSTRAP_KEY` somente no ambiente do servidor e use `POST /api/
 ## Arquitetura
 
 A base arquitetural, contratos e decisões estão em `docs/architecture.md`, `docs/api/openapi.md`, `docs/events/catalog.md`, `docs/data/erd.md` e `docs/adr/`.
+
+### Banco de dados — decisão definitiva
+
+O KORCZAK ERP utiliza **MongoDB como banco oficial**. PostgreSQL não faz parte da stack, da infraestrutura, do CI/CD, das variáveis de ambiente ou do runtime do produto. Novos módulos devem seguir os padrões MongoDB já estabelecidos: `companyId` para isolamento de tenant, índices por tenant, transações quando necessárias e contratos de persistência centralizados em `apps/api/src/core/db.ts`.
