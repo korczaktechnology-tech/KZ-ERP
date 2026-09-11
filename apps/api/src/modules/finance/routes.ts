@@ -1,0 +1,38 @@
+import { createHash, randomUUID } from 'node:crypto';
+import { Decimal128, MongoServerError } from 'mongodb';
+import type { Db, Filter } from 'mongodb';
+import { Router } from 'express';
+import { z } from 'zod';
+import { created, fail, ok, paginated, parsePagination } from '../../core/api.js';
+import { tenantCollection } from '../../core/db.js';
+import type { FinancialEntry } from '../../core/models.js';
+import { requireAuth } from '../../core/auth.js';
+import { hasPermission, type Role } from '../../core/types.js';
+
+const id=z.string().uuid();
+const idem=z.string().uuid();
+const money=z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/).refine(v=>v!=='0','amount must be greater than zero');
+const date=z.string().datetime({offset:true});
+const createSchema=z.object({description:z.string().trim().min(1).max(240),type:z.enum(['receivable','payable']),amount:money,dueDate:date,reference:z.string().trim().max(120).optional()});
+const updateSchema=z.object({description:z.string().trim().min(1).max(240).optional(),amount:money.optional(),dueDate:date.optional(),reference:z.string().trim().max(120).optional()}).refine(v=>Object.keys(v).length>0,'at least one field is required');
+type Audit={_id:string;companyId:string;actorUserId:string;action:string;resource:string;resourceId:string;metadata?:Record<string,unknown>;createdAt:Date};
+type Actor={id:string;companyId:string;role:Role};
+function actor(res:Parameters<typeof requireAuth>[1]):Actor{return res.locals.user as Actor;}
+function canRead(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(res).role,'finance:read');}
+function canWrite(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(res).role,'finance:write');}
+function key(req:Parameters<typeof requireAuth>[0]){const raw=req.get('Idempotency-Key');return raw?idem.parse(raw):undefined;}
+function hash(v:unknown){return createHash('sha256').update(JSON.stringify(v)).digest('hex');}
+function serialize(e:FinancialEntry){return {...e,amount:e.amount.toString()};}
+export function financeRouter(db:Db):Router{
+ const router=Router();router.use(requireAuth);const entries=tenantCollection<FinancialEntry>(db,'financial_entries');
+ const audit=(a:Actor,action:string,id:string,metadata?:Record<string,unknown>)=>db.collection<Audit>('audit_logs').insertOne({_id:randomUUID(),companyId:a.companyId,actorUserId:a.id,action,resource:'financial_entry',resourceId:id,metadata,createdAt:new Date()});
+ router.get('/entries',async(req,res,next)=>{try{if(!canRead(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),p=parsePagination(req.query),filter:Filter<FinancialEntry>={};if(typeof req.query.type==='string')filter.type=z.enum(['receivable','payable']).parse(req.query.type);if(typeof req.query.status==='string')filter.status=z.enum(['open','paid','cancelled']).parse(req.query.status);const [items,total]=await Promise.all([entries.find(a.companyId,filter).sort({dueDate:1,createdAt:-1}).skip(p.offset).limit(p.limit).toArray(),entries.find(a.companyId,filter).count()]);paginated(res,items.map(serialize),total,p);}catch(e){next(e);}});
+ router.get('/entries/:id',async(req,res,next)=>{try{if(!canRead(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),entry=await entries.findOne(a.companyId,{_id:id.parse(req.params.id)});if(!entry){fail(res,404,'NOT_FOUND','Financial entry not found');return;}ok(res,{entry:serialize(entry)});}catch(e){next(e);}});
+ router.post('/entries',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),input=createSchema.parse(req.body),k=key(req),h=hash(input);if(k){const prior=await entries.findOne(a.companyId,{idempotencyKey:k});if(prior){if(prior.operationHash!==h){fail(res,409,'CONFLICT','Idempotency-Key was already used for a different operation');return;}created(res,{entry:serialize(prior)});return;}}const now=new Date(),entry:FinancialEntry={_id:randomUUID(),companyId:a.companyId,description:input.description,type:input.type,status:'open',amount:Decimal128.fromString(input.amount),dueDate:new Date(input.dueDate),reference:input.reference,idempotencyKey:k,operationHash:h,createdAt:now,updatedAt:now};try{await entries.insertOne(a.companyId,entry);await audit(a,'finance.entry.create',entry._id!,{type:entry.type,amount:entry.amount.toString()});}catch(e){if(e instanceof MongoServerError&&e.code===11000&&k){const prior=await entries.findOne(a.companyId,{idempotencyKey:k});if(prior&&prior.operationHash===h){created(res,{entry:serialize(prior)});return;}}throw e;}created(res,{entry:serialize(entry)});}catch(e){next(e);}});
+ router.patch('/entries/:id',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),eid=id.parse(req.params.id),current=await entries.findOne(a.companyId,{_id:eid});if(!current){fail(res,404,'NOT_FOUND','Financial entry not found');return;}if(current.status!=='open'){fail(res,409,'CONFLICT','Only open entries can be edited');return;}const input=updateSchema.parse(req.body);const set:{description?:string;amount?:Decimal128;dueDate?:Date;reference?:string;updatedAt:Date}={updatedAt:new Date()};if(input.description!==undefined)set.description=input.description;if(input.amount!==undefined)set.amount=Decimal128.fromString(input.amount);if(input.dueDate!==undefined)set.dueDate=new Date(input.dueDate);if(input.reference!==undefined)set.reference=input.reference;await entries.updateOne(a.companyId,{_id:eid,status:'open'},{$set:set});const updated=await entries.findOne(a.companyId,{_id:eid});await audit(a,'finance.entry.update',eid);ok(res,{entry:updated?serialize(updated):null});}catch(e){next(e);}});
+ async function transition(req:Parameters<typeof requireAuth>[0],res:Parameters<typeof requireAuth>[1],next:Parameters<typeof requireAuth>[2],action:'pay'|'cancel'){try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),eid=id.parse(req.params.id),current=await entries.findOne(a.companyId,{_id:eid});if(!current){fail(res,404,'NOT_FOUND','Financial entry not found');return;}if(current.status!=='open'){fail(res,409,'CONFLICT','Only open entries can change status');return;}const update=action==='pay'?{$set:{status:'paid' as const,paidAt:new Date(),updatedAt:new Date()}}:{$set:{status:'cancelled' as const,updatedAt:new Date()}};await entries.updateOne(a.companyId,{_id:eid,status:'open'},update);const updated=await entries.findOne(a.companyId,{_id:eid});await audit(a,`finance.entry.${action}`,eid);ok(res,{entry:updated?serialize(updated):null});}catch(e){next(e);}}
+ router.post('/entries/:id/pay',(req,res,next)=>void transition(req,res,next,'pay'));
+ router.post('/entries/:id/cancel',(req,res,next)=>void transition(req,res,next,'cancel'));
+ router.get('/summary',async(req,res,next)=>{try{if(!canRead(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),rows=await entries.find(a.companyId,{status:'open'}).toArray(),now=new Date();const total=(type:'receivable'|'payable')=>rows.filter(x=>x.type===type).reduce((s,x)=>s+Number(x.amount.toString()),0);const overdue=(type:'receivable'|'payable')=>rows.filter(x=>x.type===type&&x.dueDate<now).reduce((s,x)=>s+Number(x.amount.toString()),0);ok(res,{summary:{openReceivable:total('receivable').toFixed(2),openPayable:total('payable').toFixed(2),overdueReceivable:overdue('receivable').toFixed(2),overduePayable:overdue('payable').toFixed(2),openCount:rows.length}});}catch(e){next(e);}});
+ return router;
+}

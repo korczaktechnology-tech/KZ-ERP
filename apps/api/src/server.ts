@@ -11,6 +11,7 @@ import { ensureMasterDataCollections } from './modules/master-data/collections.j
 import { salesRouter } from './modules/sales/routes.js';
 import { stockRouter } from './modules/stock/routes.js';
 import { ensureStockCollections } from './modules/stock/collections.js';
+import { financeRouter } from './modules/finance/routes.js';
 
 const PORT = Number(process.env.PORT ?? 10000);
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -19,77 +20,26 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN;
 const AUTH_SECRET = process.env.AUTH_SECRET;
 const CORE_BOOTSTRAP_KEY = process.env.CORE_BOOTSTRAP_KEY;
 const APP_VERSION = process.env.APP_VERSION ?? '0.1.3';
-
 if (!MONGODB_URI) throw new Error('MONGODB_URI is required');
 if (!AUTH_SECRET || AUTH_SECRET.length < 32) throw new Error('AUTH_SECRET must be set and contain at least 32 characters');
 if (!CORE_BOOTSTRAP_KEY || CORE_BOOTSTRAP_KEY.length < 32) throw new Error('CORE_BOOTSTRAP_KEY must be set and contain at least 32 characters');
 if (!CORS_ORIGIN) throw new Error('CORS_ORIGIN is required');
-const configuredCorsOrigins = CORS_ORIGIN.split(',').map(v => v.trim()).filter(Boolean);
-if (configuredCorsOrigins.length === 0 || configuredCorsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
-const desktopOrigins = new Set(['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost', 'http://localhost:1420']);
-const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-const corsOrigins = new Set([...configuredCorsOrigins, ...desktopOrigins]);
-const isAllowedOrigin = (origin: string) => corsOrigins.has(origin) || localhostOriginPattern.test(origin);
-
-const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000, socketTimeoutMS: 10000 });
-const db = mongo.db(MONGODB_DB);
-let databaseReady = false;
-let databaseError = '';
-
-const app = express();
-app.disable('x-powered-by');
-app.use(requestId);
-app.use(cors({ origin: (origin, callback) => !origin || isAllowedOrigin(origin) ? callback(null, true) : callback(new Error('CORS origin not allowed')) }));
-app.use(express.json({ limit: '1mb' }));
-
-app.get('/health/live', (_req, res) => res.json({ data: { status: 'ok', service: 'kz-erp-api', check: 'live' }, requestId: res.locals.requestId }));
-app.get('/health/ready', async (_req, res) => {
-  if (!databaseReady) return res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
-  try { await db.command({ ping: 1 }); res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION, check: 'ready' }, requestId: res.locals.requestId }); }
-  catch { databaseReady = false; res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId }); }
-});
-app.get('/health', async (_req, res) => {
-  if (!databaseReady) return res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
-  try { await db.command({ ping: 1 }); res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION }, requestId: res.locals.requestId }); }
-  catch { databaseReady = false; res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId }); }
-});
-app.get('/api/v1/system', (_req, res) => res.json({ data: { name: 'KORCZAK ERP', version: APP_VERSION, integrationNamespaces: ['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS'] }, requestId: res.locals.requestId }));
-const databaseRequired = (_req: express.Request, res: express.Response, next: express.NextFunction) => databaseReady ? next() : res.status(503).json({ error: { code: 'DATABASE_NOT_READY', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
-
-app.use('/api/v1/updates', updates);
-app.use('/api/v1', databaseRequired, coreRouter(db));
-app.use('/api/v1/master-data', databaseRequired, masterDataRouter(db));
-app.use('/api/v1/stock', databaseRequired, stockRouter(db));
-app.use('/api/v1/sales', databaseRequired, salesRouter(db));
-app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found' }, requestId: res.locals.requestId }));
-app.use(errorMiddleware);
-
-const server = app.listen(PORT, '0.0.0.0', () => console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`));
-server.keepAliveTimeout = 65000;
-server.headersTimeout = 66000;
-
-async function initializeDatabase() {
-  for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      await mongo.connect();
-      await ensureCoreCollections(db);
-      await ensureModuleCollections(db);
-      await ensureMasterDataCollections(db);
-      await ensureStockCollections(db);
-      databaseReady = true;
-      databaseError = '';
-      console.log('KZ-ERP MongoDB ready');
-      return;
-    } catch (error) {
-      databaseReady = false;
-      databaseError = error instanceof Error ? error.message : 'Database initialization failed';
-      console.error(`MongoDB initialization attempt ${attempt}/5 failed:`, error);
-      if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 3000));
-    }
-  }
-  console.error('KZ-ERP API started without a ready database; health/ready remains 503.');
-}
-void initializeDatabase();
-const shutdown = async (signal: string) => { console.log(`${signal}: shutting down`); server.close(async () => { await mongo.close().catch(() => undefined); process.exit(0); }); };
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
-process.on('SIGINT', () => void shutdown('SIGINT'));
+const configuredCorsOrigins = CORS_ORIGIN.split(',').map(v=>v.trim()).filter(Boolean);
+if (configuredCorsOrigins.length===0 || configuredCorsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
+const desktopOrigins = new Set(['http://tauri.localhost','https://tauri.localhost','tauri://localhost','http://localhost:1420']);
+const localhostOriginPattern=/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const corsOrigins=new Set([...configuredCorsOrigins,...desktopOrigins]);
+const isAllowedOrigin=(origin:string)=>corsOrigins.has(origin)||localhostOriginPattern.test(origin);
+const mongo=new MongoClient(MONGODB_URI,{serverSelectionTimeoutMS:5000,connectTimeoutMS:5000,socketTimeoutMS:10000});
+const db=mongo.db(MONGODB_DB);let databaseReady=false;let databaseError='';
+const app=express();app.disable('x-powered-by');app.use(requestId);app.use(cors({origin:(origin,callback)=>!origin||isAllowedOrigin(origin)?callback(null,true):callback(new Error('CORS origin not allowed'))}));app.use(express.json({limit:'1mb'}));
+app.get('/health/live',(_req,res)=>res.json({data:{status:'ok',service:'kz-erp-api',check:'live'},requestId:res.locals.requestId}));
+app.get('/health/ready',async(_req,res)=>{if(!databaseReady)return res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:databaseError||'Database is starting'},requestId:res.locals.requestId});try{await db.command({ping:1});res.json({data:{status:'ok',service:'kz-erp-api',database:'ok',version:APP_VERSION,check:'ready'},requestId:res.locals.requestId});}catch{databaseReady=false;res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:'Database unavailable'},requestId:res.locals.requestId});}});
+app.get('/health',async(_req,res)=>{if(!databaseReady)return res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:databaseError||'Database is starting'},requestId:res.locals.requestId});try{await db.command({ping:1});res.json({data:{status:'ok',service:'kz-erp-api',database:'ok',version:APP_VERSION},requestId:res.locals.requestId});}catch{databaseReady=false;res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:'Database unavailable'},requestId:res.locals.requestId});}});
+app.get('/api/v1/system',(_req,res)=>res.json({data:{name:'KORCZAK ERP',version:APP_VERSION,integrationNamespaces:['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS']},requestId:res.locals.requestId}));
+const databaseRequired=(_req:express.Request,res:express.Response,next:express.NextFunction)=>databaseReady?next():res.status(503).json({error:{code:'DATABASE_NOT_READY',message:databaseError||'Database is starting'},requestId:res.locals.requestId});
+app.use('/api/v1/updates',updates);app.use('/api/v1',databaseRequired,coreRouter(db));app.use('/api/v1/master-data',databaseRequired,masterDataRouter(db));app.use('/api/v1/stock',databaseRequired,stockRouter(db));app.use('/api/v1/sales',databaseRequired,salesRouter(db));app.use('/api/v1/finance',databaseRequired,financeRouter(db));
+app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Resource not found'},requestId:res.locals.requestId}));app.use(errorMiddleware);
+const server=app.listen(PORT,'0.0.0.0',()=>console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`));server.keepAliveTimeout=65000;server.headersTimeout=66000;
+async function initializeDatabase(){for(let attempt=1;attempt<=5;attempt+=1){try{await mongo.connect();await ensureCoreCollections(db);await ensureModuleCollections(db);await ensureMasterDataCollections(db);await ensureStockCollections(db);databaseReady=true;databaseError='';console.log('KZ-ERP MongoDB ready');return;}catch(error){databaseReady=false;databaseError=error instanceof Error?error.message:'Database initialization failed';console.error(`MongoDB initialization attempt ${attempt}/5 failed:`,error);if(attempt<5)await new Promise(resolve=>setTimeout(resolve,3000));}}console.error('KZ-ERP API started without a ready database; health/ready remains 503.');}
+void initializeDatabase();const shutdown=async(signal:string)=>{console.log(`${signal}: shutting down`);server.close(async()=>{await mongo.close().catch(()=>undefined);process.exit(0);});};process.on('SIGTERM',()=>void shutdown('SIGTERM'));process.on('SIGINT',()=>void shutdown('SIGINT'));
