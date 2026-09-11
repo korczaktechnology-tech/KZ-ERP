@@ -1,4 +1,4 @@
-# KZ-ERP API contract — F2 Dados mestre
+# KZ-ERP API contract — F2/F3
 
 The public API is versioned under `/api/v1` and uses JSON envelopes.
 
@@ -86,9 +86,40 @@ Unit kinds: `unit`, `weight`, `volume`, `length`, `area`, `time`, `other`.
 
 Price amounts are stored as BSON `Decimal128` and accepted by the API as decimal strings, e.g. `"19.90"`, to preserve monetary precision.
 
+## F3 Stock
+
+All F3 routes require an authenticated active tenant. Read operations require `stock:read`; write operations require `stock:write`.
+
+### Warehouses
+
+- `GET /api/v1/stock/warehouses` — active warehouses available to the current tenant.
+
+Warehouse creation/editing remains in the F2 compatibility master-data contract; F3 consumes those canonical warehouse records.
+
+### Balances
+
+- `GET /api/v1/stock/balances` — paginated balances, optionally filtered by `warehouseId` and/or `productId`.
+- `PATCH /api/v1/stock/balances/:warehouseId/:productId/minimum` — changes the minimum stock threshold.
+- `GET /api/v1/stock/summary` — operational totals and count of balances at or below minimum.
+
+Balance quantities are BSON `Decimal128`. API responses expose them as decimal strings. `availableQuantity = quantity - reservedQuantity`.
+
+### Movements
+
+- `GET /api/v1/stock/movements` — paginated movement ledger; optional filters `productId`, `warehouseId`, `type`.
+- `POST /api/v1/stock/movements` — records `receipt`, `issue`, `adjustment` or `transfer`.
+
+A reduction is rejected with HTTP 409 when it would make available stock negative. Transfers require distinct source/destination warehouses.
+
+### Reservations
+
+- `GET /api/v1/stock/reservations` — active reservations, optionally filtered by product/warehouse.
+- `POST /api/v1/stock/reservations` — reserves available stock.
+- `DELETE /api/v1/stock/reservations/:id` — releases an active reservation.
+
 ## Compatibility master-data endpoints
 
-The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` endpoints remain available for the current sales/desktop flow. They are tenant-isolated and now protected by the same F2 permissions. The unified `parties` model is the canonical F2 master for new integrations.
+The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` endpoints remain available for the current desktop flow. They are tenant-isolated and protected by the F2 permissions. The unified `parties` model is the canonical F2 master for new integrations.
 
 ## Tenant isolation
 
