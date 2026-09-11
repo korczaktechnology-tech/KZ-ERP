@@ -110,6 +110,9 @@ jobs:
           set -euo pipefail
           psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/000_extensions.sql
           psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/001_enterprise_core.sql
+          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -f db/postgresql/002_audit_trigger_hardening.sql
+          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "INSERT INTO erp.tenant(legal_name,trade_name,tax_id) VALUES ('CI Empresa','CI Empresa','CI-001') RETURNING id;"
+          psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "SELECT count(*) FROM pg_policies WHERE schemaname='erp';"
           psql -h 127.0.0.1 -U postgres -d erp_ci -v ON_ERROR_STOP=1 -c "SELECT extname FROM pg_extension WHERE extname IN ('pgcrypto','citext') ORDER BY extname;"
   infrastructure:
     name: Infrastructure validation
