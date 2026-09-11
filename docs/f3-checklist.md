@@ -24,9 +24,9 @@ F3 entrega o controle operacional de estoque do KORCZAK ERP sobre os produtos e 
 - [x] Tenant isolation em todas as consultas e escritas.
 - [x] Interface desktop real ligada à API, sem registros fictícios.
 - [x] Renovação de sessão no fluxo de operações do desktop.
-- [x] CI/build existentes preservados.
-- [x] Atualizador reforçado para consumir o digest SHA-256 do asset do GitHub quando disponível.
-- [x] Release Linux preparado para gerar uma versão única por push em `main`, usando o número de commits desde o último release como incremento do PATCH.
+- [x] Operações de estoque + auditoria agrupadas em transações MongoDB.
+- [x] Transferências são atômicas entre origem, destino, movimento e auditoria.
+- [x] Reservas e liberações são atômicas entre saldo, reserva e auditoria.
 
 ## Regras
 
@@ -39,6 +39,7 @@ F3 entrega o controle operacional de estoque do KORCZAK ERP sobre os produtos e 
 7. Exclusão física de movimentos e reservas não é permitida pelo contrato operacional.
 8. Operações críticas geram evento em `audit_logs`.
 9. O desktop não acessa MongoDB diretamente.
+10. Falha em qualquer efeito persistente de uma operação transacional aborta a operação inteira.
 
 ## Critério de passagem de engenharia
 
@@ -54,4 +55,4 @@ F3 entrega o controle operacional de estoque do KORCZAK ERP sobre os produtos e 
 - Smoke test real de isolamento entre tenants.
 - Smoke test real do aplicativo instalado.
 
-Os smoke tests reais e a execução do `.deb` no ambiente do usuário permanecem como validação externa desta fase.
+Os smoke tests reais e a execução do `.deb` no ambiente do usuário permanecem como validação externa desta fase; a implementação transacional e os contratos de engenharia já estão fechados no código.
