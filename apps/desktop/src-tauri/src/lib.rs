@@ -39,12 +39,27 @@ async fn install_update(asset_url: String, version: String, expected_sha256: Str
     }
     fs::write(&temp, &bytes).map_err(|e| format!("write update: {e}"))?;
 
-    let status = Command::new("pkexec")
-        .arg("dpkg")
-        .arg("-i")
+    let install = Command::new("pkexec")
+        .arg("apt-get")
+        .arg("install")
+        .arg("-y")
+        .arg("--no-install-recommends")
         .arg(&temp)
-        .status()
-        .map_err(|e| format!("start package installer: {e}"))?;
+        .output();
+    let status = match install {
+        Ok(output) if output.status.success() => output.status,
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exit status {}", output.status) };
+            let _ = fs::remove_file(&temp);
+            return Err(format!("package installation failed: {detail}"));
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            return Err(format!("start package installer: {error}"));
+        }
+    };
     if !status.success() {
         let _ = fs::remove_file(&temp);
         return Err(format!("package installation failed: {status}"));
