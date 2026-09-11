@@ -34,12 +34,14 @@ const desktopOrigins = new Set([
 ]);
 const corsOrigins = new Set([...configuredCorsOrigins, ...desktopOrigins]);
 
-const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
-await mongo.connect();
+const mongo = new MongoClient(MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000,
+  connectTimeoutMS: 5000,
+  socketTimeoutMS: 10000,
+});
 const db = mongo.db(MONGODB_DB);
-await ensureCoreCollections(db);
-await ensureModuleCollections(db);
-await ensureMasterDataCollections(db);
+let databaseReady = false;
+let databaseError = '';
 
 const app = express();
 app.disable('x-powered-by');
@@ -57,19 +59,33 @@ app.get('/health/live', (_req, res) => {
 });
 
 app.get('/health/ready', async (_req, res) => {
+  if (!databaseReady) {
+    return res.status(503).json({
+      error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' },
+      requestId: res.locals.requestId,
+    });
+  }
   try {
     await db.command({ ping: 1 });
     res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION, check: 'ready' }, requestId: res.locals.requestId });
   } catch {
+    databaseReady = false;
     res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
   }
 });
 
 app.get('/health', async (_req, res) => {
+  if (!databaseReady) {
+    return res.status(503).json({
+      error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' },
+      requestId: res.locals.requestId,
+    });
+  }
   try {
     await db.command({ ping: 1 });
     res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION }, requestId: res.locals.requestId });
   } catch {
+    databaseReady = false;
     res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
   }
 });
@@ -82,13 +98,57 @@ app.get('/api/v1/system', (_req, res) => res.json({
   },
   requestId: res.locals.requestId
 }));
-app.use('/api/v1', coreRouter(db));
-app.use('/api/v1/master-data', masterDataRouter(db));
-app.use('/api/v1/sales', salesRouter(db));
+
+const databaseRequired = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (databaseReady) return next();
+  return res.status(503).json({
+    error: { code: 'DATABASE_NOT_READY', message: databaseError || 'Database is starting' },
+    requestId: res.locals.requestId,
+  });
+};
+
+app.use('/api/v1', databaseRequired, coreRouter(db));
+app.use('/api/v1/master-data', databaseRequired, masterDataRouter(db));
+app.use('/api/v1/sales', databaseRequired, salesRouter(db));
 app.use('/api/v1/updates', updates);
 app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found' }, requestId: res.locals.requestId }));
 app.use(errorMiddleware);
-const server = app.listen(PORT, () => console.log(`KZ-ERP API listening on :${PORT}`));
-const shutdown = async (signal: string) => { console.log(`${signal}: shutting down`); server.close(async () => { await mongo.close(); process.exit(0); }); };
+
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`);
+});
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
+async function initializeDatabase() {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await mongo.connect();
+      await ensureCoreCollections(db);
+      await ensureModuleCollections(db);
+      await ensureMasterDataCollections(db);
+      databaseReady = true;
+      databaseError = '';
+      console.log('KZ-ERP MongoDB ready');
+      return;
+    } catch (error) {
+      databaseReady = false;
+      databaseError = error instanceof Error ? error.message : 'Database initialization failed';
+      console.error(`MongoDB initialization attempt ${attempt}/5 failed:`, error);
+      if (attempt < 5) await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+  }
+  console.error('KZ-ERP API started without a ready database; health/ready remains 503.');
+}
+
+void initializeDatabase();
+
+const shutdown = async (signal: string) => {
+  console.log(`${signal}: shutting down`);
+  server.close(async () => {
+    await mongo.close().catch(() => undefined);
+    process.exit(0);
+  });
+};
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
