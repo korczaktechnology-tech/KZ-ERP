@@ -9,6 +9,8 @@ import { errorMiddleware, requestId } from './core/api.js';
 import { masterDataRouter } from './modules/master-data/routes.js';
 import { ensureMasterDataCollections } from './modules/master-data/collections.js';
 import { salesRouter } from './modules/sales/routes.js';
+import { stockRouter } from './modules/stock/routes.js';
+import { ensureStockCollections } from './modules/stock/collections.js';
 
 const PORT = Number(process.env.PORT ?? 10000);
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -24,25 +26,12 @@ if (!CORE_BOOTSTRAP_KEY || CORE_BOOTSTRAP_KEY.length < 32) throw new Error('CORE
 if (!CORS_ORIGIN) throw new Error('CORS_ORIGIN is required');
 const configuredCorsOrigins = CORS_ORIGIN.split(',').map(v => v.trim()).filter(Boolean);
 if (configuredCorsOrigins.length === 0 || configuredCorsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
-
-// Tauri 2 can identify the desktop WebView with tauri.localhost in production,
-// while development may use localhost, 127.0.0.1, or the legacy tauri:// origin.
-// These are first-party desktop origins only; arbitrary websites remain blocked.
-const desktopOrigins = new Set([
-  'http://tauri.localhost',
-  'https://tauri.localhost',
-  'tauri://localhost',
-  'http://localhost:1420',
-]);
+const desktopOrigins = new Set(['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost', 'http://localhost:1420']);
 const localhostOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 const corsOrigins = new Set([...configuredCorsOrigins, ...desktopOrigins]);
 const isAllowedOrigin = (origin: string) => corsOrigins.has(origin) || localhostOriginPattern.test(origin);
 
-const mongo = new MongoClient(MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
-  connectTimeoutMS: 5000,
-  socketTimeoutMS: 10000,
-});
+const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000, socketTimeoutMS: 10000 });
 const db = mongo.db(MONGODB_DB);
 let databaseReady = false;
 let databaseError = '';
@@ -50,79 +39,32 @@ let databaseError = '';
 const app = express();
 app.disable('x-powered-by');
 app.use(requestId);
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
-    return callback(new Error('CORS origin not allowed'));
-  },
-}));
+app.use(cors({ origin: (origin, callback) => !origin || isAllowedOrigin(origin) ? callback(null, true) : callback(new Error('CORS origin not allowed')) }));
 app.use(express.json({ limit: '1mb' }));
 
-app.get('/health/live', (_req, res) => {
-  res.json({ data: { status: 'ok', service: 'kz-erp-api', check: 'live' }, requestId: res.locals.requestId });
-});
-
+app.get('/health/live', (_req, res) => res.json({ data: { status: 'ok', service: 'kz-erp-api', check: 'live' }, requestId: res.locals.requestId }));
 app.get('/health/ready', async (_req, res) => {
-  if (!databaseReady) {
-    return res.status(503).json({
-      error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' },
-      requestId: res.locals.requestId,
-    });
-  }
-  try {
-    await db.command({ ping: 1 });
-    res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION, check: 'ready' }, requestId: res.locals.requestId });
-  } catch {
-    databaseReady = false;
-    res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
-  }
+  if (!databaseReady) return res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
+  try { await db.command({ ping: 1 }); res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION, check: 'ready' }, requestId: res.locals.requestId }); }
+  catch { databaseReady = false; res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId }); }
 });
-
 app.get('/health', async (_req, res) => {
-  if (!databaseReady) {
-    return res.status(503).json({
-      error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' },
-      requestId: res.locals.requestId,
-    });
-  }
-  try {
-    await db.command({ ping: 1 });
-    res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION }, requestId: res.locals.requestId });
-  } catch {
-    databaseReady = false;
-    res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId });
-  }
+  if (!databaseReady) return res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
+  try { await db.command({ ping: 1 }); res.json({ data: { status: 'ok', service: 'kz-erp-api', database: 'ok', version: APP_VERSION }, requestId: res.locals.requestId }); }
+  catch { databaseReady = false; res.status(503).json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Database unavailable' }, requestId: res.locals.requestId }); }
 });
+app.get('/api/v1/system', (_req, res) => res.json({ data: { name: 'KORCZAK ERP', version: APP_VERSION, integrationNamespaces: ['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS'] }, requestId: res.locals.requestId }));
+const databaseRequired = (_req: express.Request, res: express.Response, next: express.NextFunction) => databaseReady ? next() : res.status(503).json({ error: { code: 'DATABASE_NOT_READY', message: databaseError || 'Database is starting' }, requestId: res.locals.requestId });
 
-app.get('/api/v1/system', (_req, res) => res.json({
-  data: {
-    name: 'KORCZAK ERP',
-    version: APP_VERSION,
-    integrationNamespaces: ['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS']
-  },
-  requestId: res.locals.requestId
-}));
-
-const databaseRequired = (_req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (databaseReady) return next();
-  return res.status(503).json({
-    error: { code: 'DATABASE_NOT_READY', message: databaseError || 'Database is starting' },
-    requestId: res.locals.requestId,
-  });
-};
-
-// Keep updater endpoints outside the database readiness gate: the desktop must
-// still be able to discover/install a release when MongoDB is unavailable.
 app.use('/api/v1/updates', updates);
 app.use('/api/v1', databaseRequired, coreRouter(db));
 app.use('/api/v1/master-data', databaseRequired, masterDataRouter(db));
+app.use('/api/v1/stock', databaseRequired, stockRouter(db));
 app.use('/api/v1/sales', databaseRequired, salesRouter(db));
 app.use((_req, res) => res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Resource not found' }, requestId: res.locals.requestId }));
 app.use(errorMiddleware);
 
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`);
-});
+const server = app.listen(PORT, '0.0.0.0', () => console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`));
 server.keepAliveTimeout = 65000;
 server.headersTimeout = 66000;
 
@@ -133,6 +75,7 @@ async function initializeDatabase() {
       await ensureCoreCollections(db);
       await ensureModuleCollections(db);
       await ensureMasterDataCollections(db);
+      await ensureStockCollections(db);
       databaseReady = true;
       databaseError = '';
       console.log('KZ-ERP MongoDB ready');
@@ -146,15 +89,7 @@ async function initializeDatabase() {
   }
   console.error('KZ-ERP API started without a ready database; health/ready remains 503.');
 }
-
 void initializeDatabase();
-
-const shutdown = async (signal: string) => {
-  console.log(`${signal}: shutting down`);
-  server.close(async () => {
-    await mongo.close().catch(() => undefined);
-    process.exit(0);
-  });
-};
+const shutdown = async (signal: string) => { console.log(`${signal}: shutting down`); server.close(async () => { await mongo.close().catch(() => undefined); process.exit(0); }); };
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
