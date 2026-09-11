@@ -14,13 +14,18 @@ function headers(binary = false) {
   };
 }
 function validSha256(value: unknown): value is string { return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value); }
+function validAssetId(value: string): number | null { if (!/^\d+$/.test(value)) return null; const parsed = Number(value); return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null; }
+
+async function latestRelease() {
+  const response = await fetch(`${GH}/repos/${REPO}/releases/latest`, { headers: headers() });
+  if (!response.ok) throw new Error(`GITHUB_RELEASE_LOOKUP_FAILED:${response.status}`);
+  return await response.json() as { tag_name?: string; name?: string; body?: string; assets?: Array<{ id?: number; name?: string; digest?: string }> };
+}
 
 router.get('/latest', async (_req, res) => {
   if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' });
   try {
-    const r = await fetch(`${GH}/repos/${REPO}/releases/latest`, { headers: headers() });
-    if (!r.ok) return res.status(r.status).json({ error: 'GITHUB_RELEASE_LOOKUP_FAILED' });
-    const release = await r.json() as { tag_name?: string; name?: string; body?: string; assets?: Array<{ id?: number; name?: string; digest?: string }> };
+    const release = await latestRelease();
     const deb = release.assets?.find(asset => typeof asset.name === 'string' && asset.name.endsWith('.deb'));
     if (!deb?.id || !deb.name) return res.status(404).json({ error: 'RELEASE_ASSET_NOT_FOUND' });
 
@@ -42,22 +47,27 @@ router.get('/latest', async (_req, res) => {
     res.json({ version, tag: release.tag_name, name: release.name, notes: release.body ?? '', assetId: deb.id, assetName: deb.name, sha256 });
   } catch (error) {
     console.error(error);
-    res.status(502).json({ error: 'GITHUB_UNAVAILABLE' });
+    const status = error instanceof Error && error.message.startsWith('GITHUB_RELEASE_LOOKUP_FAILED:') ? Number(error.message.split(':')[1]) : 502;
+    res.status(status >= 400 && status < 600 ? status : 502).json({ error: 'GITHUB_RELEASE_LOOKUP_FAILED' });
   }
 });
 
 router.get('/asset/:assetId', async (req, res) => {
   if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' });
-  const assetId = Number(req.params.assetId);
-  if (!Number.isSafeInteger(assetId) || assetId <= 0) return res.status(400).json({ error: 'INVALID_ASSET_ID' });
+  const assetId = validAssetId(req.params.assetId);
+  if (assetId === null) return res.status(400).json({ error: 'INVALID_ASSET_ID' });
   try {
+    // Never proxy an arbitrary release asset. Bind downloads to the .deb exposed by /latest.
+    const release = await latestRelease();
+    const deb = release.assets?.find(asset => asset.id === assetId && typeof asset.name === 'string' && asset.name.endsWith('.deb'));
+    if (!deb?.id || !deb.name) return res.status(404).json({ error: 'RELEASE_ASSET_NOT_FOUND' });
     const r = await fetch(`${GH}/repos/${REPO}/releases/assets/${assetId}`, { headers: headers(true), redirect: 'follow' });
     if (!r.ok || !r.body) return res.status(r.status || 502).json({ error: 'ASSET_DOWNLOAD_FAILED' });
     res.setHeader('Content-Type', 'application/vnd.debian.binary-package');
     const length = r.headers.get('content-length'); if (length) res.setHeader('Content-Length', length);
     for await (const chunk of r.body as any) res.write(Buffer.from(chunk));
     res.end();
-  } catch (error) { console.error(error); res.destroy(); }
+  } catch (error) { console.error(error); if (!res.headersSent) res.status(502).json({ error: 'ASSET_DOWNLOAD_FAILED' }); else res.destroy(); }
 });
 
 export default router;
