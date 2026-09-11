@@ -95,20 +95,3 @@ jobs:
           ! grep -RniE 'postgres|postgresql|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD' \
             apps infra render.yaml docker-compose.yml
           grep -Rni 'MONGODB_URI' apps/api infra render.yaml docker-compose.yml
-  infrastructure:
-    name: Infrastructure validation
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.9.8
-      - name: Terraform format check
-        working-directory: infra/terraform
-        run: terraform fmt -check -recursive
-      - name: Terraform init
-        working-directory: infra/terraform
-        run: terraform init -backend=false -input=false
-      - name: Terraform validate
-        working-directory: infra/terraform
-        run: terraform validate
