@@ -15,15 +15,14 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: release-linux-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -59,33 +58,24 @@ jobs:
           DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-
           if [ -n "$DISPATCH_VERSION" ]; then
             VERSION="${DISPATCH_VERSION#v}"
           else
             LATEST_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName // empty')"
             if [ -n "$LATEST_TAG" ]; then
               BASE="${LATEST_TAG#v}"
+              if ! git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then git fetch origin "refs/tags/$LATEST_TAG:refs/tags/$LATEST_TAG"; fi
+              COMMITS_SINCE="$(git rev-list --count "$LATEST_TAG..$GITHUB_SHA")"
             else
               BASE="$(node -p "require('./apps/desktop/package.json').version")"
+              COMMITS_SINCE=1
             fi
-
-            if [[ ! "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "ERRO: versão base inválida: $BASE"
-              exit 1
-            fi
-
+            if [[ ! "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "ERRO: versão base inválida: $BASE"; exit 1; fi
             IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
-            PATCH=$((PATCH + 1))
-            VERSION="$MAJOR.$MINOR.$PATCH"
+            if [ "$COMMITS_SINCE" -lt 1 ]; then COMMITS_SINCE=1; fi
+            VERSION="$MAJOR.$MINOR.$((PATCH + COMMITS_SINCE))"
           fi
-
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERRO: versão inválida: $VERSION"
-            echo "Use SemVer no formato X.Y.Z, por exemplo 0.1.3."
-            exit 1
-          fi
-
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "ERRO: versão inválida: $VERSION"; exit 1; fi
           echo "BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Release desta execução: v$VERSION"
 
@@ -121,11 +111,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           packages=(apps/desktop/src-tauri/target/release/bundle/deb/*.deb)
-          if [ "${#packages[@]}" -ne 1 ]; then
-            echo "ERRO: esperado exatamente 1 arquivo .deb; encontrados ${#packages[@]}"
-            printf '%s\n' "${packages[@]}"
-            exit 1
-          fi
+          if [ "${#packages[@]}" -ne 1 ]; then echo "ERRO: esperado exatamente 1 arquivo .deb; encontrados ${#packages[@]}"; printf '%s\n' "${packages[@]}"; exit 1; fi
           file "${packages[0]}"
           dpkg-deb --info "${packages[0]}"
           dpkg-deb --contents "${packages[0]}" >/dev/null
@@ -158,10 +144,4 @@ jobs:
             echo "ERRO: Release $TAG já existe. Isso indica colisão de versão."
             exit 1
           fi
-          gh release create "$TAG" \
-            release-artifact/KORCZAK-ERP-linux-amd64.deb \
-            release-artifact/SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" \
-            --title "KORCZAK ERP $TAG" \
-            --notes "Release oficial do KORCZAK ERP para Linux. Criado automaticamente a partir do push $GITHUB_SHA."
+          gh release create "$TAG" release-artifact/KORCZAK-ERP-linux-amd64.deb release-artifact/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "KORCZAK ERP $TAG" --notes "Release oficial do KORCZAK ERP para Linux. Criado automaticamente a partir do push $GITHUB_SHA."
