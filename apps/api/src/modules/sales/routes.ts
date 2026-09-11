@@ -1,47 +1,30 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { Decimal128, MongoServerError } from 'mongodb';
+import type { Db, Filter } from 'mongodb';
 import { Router } from 'express';
-import type { Db } from 'mongodb';
 import { z } from 'zod';
-import { created, ok, paginated, parsePagination } from '../../core/api.js';
+import { created, fail, ok, paginated, parsePagination } from '../../core/api.js';
 import { tenantCollection } from '../../core/db.js';
-import type { Customer, Product, SalesOrder } from '../../core/models.js';
+import type { Customer, Product, SalesOrder, DocumentLine } from '../../core/models.js';
 import { requireAuth } from '../../core/auth.js';
-
-const lineSchema = z.object({ productId: z.string().uuid(), quantity: z.number().finite().positive().max(1_000_000), unitPrice: z.number().finite().min(0).max(1_000_000_000) });
-const orderSchema = z.object({ number: z.string().trim().min(1).max(80), customerId: z.string().uuid(), lines: z.array(lineSchema).min(1).max(500) });
-
-export function salesRouter(db: Db): Router {
-  const router = Router();
-  router.use(requireAuth);
-  const orders = tenantCollection<SalesOrder>(db, 'sales_orders');
-  const products = tenantCollection<Product>(db, 'products');
-  const customers = tenantCollection<Customer>(db, 'customers');
-
-  router.get('/orders', async (req, res, next) => {
-    try {
-      const companyId = (res.locals.user as { companyId: string }).companyId;
-      const p = parsePagination(req.query);
-      const [items, total] = await Promise.all([orders.find(companyId).sort({ createdAt: -1 }).skip(p.offset).limit(p.limit).toArray(), orders.find(companyId).count()]);
-      paginated(res, items, total, p);
-    } catch (e) { next(e); }
-  });
-
-  router.post('/orders', async (req, res, next) => {
-    try {
-      const companyId = (res.locals.user as { companyId: string }).companyId;
-      const input = orderSchema.parse(req.body);
-      const customer = await customers.findOne(companyId, { _id: input.customerId, active: true });
-      if (!customer) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Customer not found' }, requestId: res.locals.requestId }); return; }
-      const ids = [...new Set(input.lines.map(line => line.productId))];
-      const found = await products.find(companyId, { _id: { $in: ids }, active: true }).toArray();
-      if (found.length !== ids.length) { res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'One or more products are invalid' }, requestId: res.locals.requestId }); return; }
-      const lines = input.lines.map(line => ({ productId: line.productId, description: found.find(p => p._id === line.productId)?.name ?? '', quantity: line.quantity, unitPrice: line.unitPrice, total: line.quantity * line.unitPrice }));
-      const subtotal = lines.reduce((sum, line) => sum + line.total, 0);
-      const now = new Date();
-      const order: SalesOrder = { _id: randomUUID(), companyId, number: input.number, customerId: input.customerId, status: 'draft', lines, subtotal, total: subtotal, createdAt: now, updatedAt: now };
-      await orders.insertOne(companyId, order);
-      created(res, { id: order._id, number: order.number, status: order.status, customerId: order.customerId, lines: order.lines, subtotal, total: order.total });
-    } catch (e) { next(e); }
-  });
-  return router;
+import { hasPermission, type Role } from '../../core/types.js';
+const id=z.string().uuid(); const idem=z.string().uuid();
+const money=z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/,'money must be a decimal string with up to 2 decimal places');
+const quantity=z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/,'quantity must be a decimal string with up to 6 decimal places').refine(v=>v!=='0','quantity must be greater than zero');
+const lineSchema=z.object({productId:id,quantity,unitPrice:money}); const createSchema=z.object({number:z.string().trim().min(1).max(80),customerId:id,lines:z.array(lineSchema).min(1).max(500)}); const updateSchema=z.object({customerId:id.optional(),lines:z.array(lineSchema).min(1).max(500).optional()}).refine(v=>v.customerId!==undefined||v.lines!==undefined,'at least one field is required');
+type Audit={_id:string;companyId:string;actorUserId:string;action:string;resource:string;resourceId:string;metadata?:Record<string,unknown>;createdAt:Date};
+function actor(res:Parameters<typeof requireAuth>[1]){return res.locals.user as {id:string;companyId:string;role:Role};} function moneyDecimal(v:string){return Decimal128.fromString(v);} function scale(v:string){const [w='0',f='']=v.split('.');return BigInt(w)*100n+BigInt(f.padEnd(2,'0'));} function moneyString(v:bigint){const w=v/100n,f=(v%100n).toString().padStart(2,'0');return f==='00'?w.toString():`${w}.${f}`;}
+function lineTotal(q:string,p:string){const [w='0',f='']=q.split('.');const qs=BigInt(w)*1_000_000n+BigInt(f.padEnd(6,'0'));return moneyDecimal(moneyString(qs*scale(p)/1_000_000n));}
+function hash(v:unknown){return createHash('sha256').update(JSON.stringify(v)).digest('hex');} function serialize(o:SalesOrder){return {...o,subtotal:o.subtotal.toString(),total:o.total.toString(),lines:o.lines.map(l=>({...l,quantity:l.quantity.toString(),unitPrice:l.unitPrice.toString(),total:l.total.toString()}))};} function key(req:Parameters<typeof requireAuth>[0]){const raw=req.get('Idempotency-Key');return raw?idem.parse(raw):undefined;} function canRead(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(res).role,'sales:read');} function canWrite(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(res).role,'sales:write');}
+export function salesRouter(db:Db):Router{
+ const router=Router();router.use(requireAuth);const orders=tenantCollection<SalesOrder>(db,'sales_orders');const products=tenantCollection<Product>(db,'products');const customers=tenantCollection<Customer>(db,'customers');
+ const audit=(a:ReturnType<typeof actor>,action:string,resourceId:string,metadata?:Record<string,unknown>)=>db.collection<Audit>('audit_logs').insertOne({_id:randomUUID(),companyId:a.companyId,actorUserId:a.id,action,resource:'sales_order',resourceId,metadata,createdAt:new Date()});
+ async function buildLines(companyId:string,input:z.infer<typeof createSchema>['lines']){const ids=[...new Set(input.map(l=>l.productId))];const found=await products.find(companyId,{_id:{$in:ids},active:true}).toArray();if(found.length!==ids.length)throw new Error('PRODUCT_NOT_FOUND');const lines:DocumentLine[]=input.map(l=>({productId:l.productId,description:found.find(p=>p._id===l.productId)?.name??'',quantity:Decimal128.fromString(l.quantity),unitPrice:moneyDecimal(l.unitPrice),total:lineTotal(l.quantity,l.unitPrice)}));return {lines,subtotal:moneyDecimal(moneyString(lines.reduce((s,l)=>s+scale(l.total.toString()),0n)))};}
+ router.get('/orders',async(req,res,next)=>{try{if(!canRead(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),p=parsePagination(req.query),filter:Filter<SalesOrder>={};if(typeof req.query.status==='string')filter.status=z.enum(['draft','confirmed','cancelled','completed']).parse(req.query.status);if(typeof req.query.customerId==='string')filter.customerId=id.parse(req.query.customerId);const [items,total]=await Promise.all([orders.find(a.companyId,filter).sort({createdAt:-1}).skip(p.offset).limit(p.limit).toArray(),orders.find(a.companyId,filter).count()]);paginated(res,items.map(serialize),total,p);}catch(e){next(e);}});
+ router.get('/orders/:id',async(req,res,next)=>{try{if(!canRead(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),o=await orders.findOne(a.companyId,{_id:id.parse(req.params.id)});if(!o){fail(res,404,'NOT_FOUND','Order not found');return;}ok(res,{order:serialize(o)});}catch(e){next(e);}});
+ router.post('/orders',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),input=createSchema.parse(req.body),k=key(req),h=hash(input);if(k){const prior=await orders.findOne(a.companyId,{idempotencyKey:k});if(prior){if(prior.operationHash!==h){fail(res,409,'CONFLICT','Idempotency-Key was already used for a different operation');return;}created(res,{order:serialize(prior)});return;}}if(!(await customers.findOne(a.companyId,{_id:input.customerId,active:true}))){fail(res,404,'NOT_FOUND','Customer not found');return;}const built=await buildLines(a.companyId,input.lines),now=new Date(),o:SalesOrder={_id:randomUUID(),companyId:a.companyId,number:input.number,customerId:input.customerId,status:'draft',lines:built.lines,subtotal:built.subtotal,total:built.subtotal,idempotencyKey:k,operationHash:h,createdAt:now,updatedAt:now};try{await orders.insertOne(a.companyId,o);await audit(a,'sales.order.create',o._id!,{number:o.number,total:o.total.toString()});}catch(e){if(e instanceof MongoServerError&&e.code===11000&&k){const prior=await orders.findOne(a.companyId,{idempotencyKey:k});if(prior&&prior.operationHash===h){created(res,{order:serialize(prior)});return;}}throw e;}created(res,{order:serialize(o)});}catch(e){if(e instanceof Error&&e.message==='PRODUCT_NOT_FOUND'){fail(res,400,'VALIDATION_ERROR','One or more products are invalid');return;}next(e);}});
+ router.patch('/orders/:id',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),oid=id.parse(req.params.id),current=await orders.findOne(a.companyId,{_id:oid});if(!current){fail(res,404,'NOT_FOUND','Order not found');return;}if(current.status!=='draft'){fail(res,409,'CONFLICT','Only draft orders can be edited');return;}const input=updateSchema.parse(req.body);if(input.customerId&&!(await customers.findOne(a.companyId,{_id:input.customerId,active:true}))){fail(res,404,'NOT_FOUND','Customer not found');return;}let lines=current.lines,subtotal=current.subtotal;if(input.lines){try{const b=await buildLines(a.companyId,input.lines);lines=b.lines;subtotal=b.subtotal;}catch(e){if(e instanceof Error&&e.message==='PRODUCT_NOT_FOUND'){fail(res,400,'VALIDATION_ERROR','One or more products are invalid');return;}throw e;}}await orders.updateOne(a.companyId,{_id:oid,status:'draft'},{$set:{customerId:input.customerId??current.customerId,lines,subtotal,total:subtotal,updatedAt:new Date()}});const updated=await orders.findOne(a.companyId,{_id:oid});await audit(a,'sales.order.update',oid);ok(res,{order:updated?serialize(updated):null});}catch(e){next(e);}});
+ router.post('/orders/:id/confirm',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),oid=id.parse(req.params.id),r=await orders.updateOne(a.companyId,{_id:oid,status:'draft'},{$set:{status:'confirmed',updatedAt:new Date()}});if(!r.matchedCount){const o=await orders.findOne(a.companyId,{_id:oid});if(!o){fail(res,404,'NOT_FOUND','Order not found');return;}fail(res,409,'CONFLICT','Only draft orders can be confirmed');return;}const o=await orders.findOne(a.companyId,{_id:oid});await audit(a,'sales.order.confirm',oid);ok(res,{order:o?serialize(o):null});}catch(e){next(e);}});
+ router.post('/orders/:id/cancel',async(req,res,next)=>{try{if(!canWrite(res)){fail(res,403,'FORBIDDEN');return;}const a=actor(res),oid=id.parse(req.params.id),r=await orders.updateOne(a.companyId,{_id:oid,status:{$in:['draft','confirmed']}},{$set:{status:'cancelled',updatedAt:new Date()}});if(!r.matchedCount){const o=await orders.findOne(a.companyId,{_id:oid});if(!o){fail(res,404,'NOT_FOUND','Order not found');return;}fail(res,409,'CONFLICT','Order cannot be cancelled in its current state');return;}const o=await orders.findOne(a.companyId,{_id:oid});await audit(a,'sales.order.cancel',oid);ok(res,{order:o?serialize(o):null});}catch(e){next(e);}});
+ return router;
 }
