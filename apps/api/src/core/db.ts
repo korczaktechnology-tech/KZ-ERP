@@ -45,7 +45,7 @@ export async function ensureCoreCollections(db: Db): Promise<void> {
 }
 
 export async function ensureModuleCollections(db: Db): Promise<void> {
-  const definitions: Record<keyof ModuleCollectionMap, { indexes: Array<{ key: Document; options?: Parameters<ReturnType<Db['collection']>['createIndex']>[1] }> }> = {
+  const definitions: Partial<Record<keyof ModuleCollectionMap, { indexes: Array<{ key: Document; options?: Parameters<ReturnType<Db['collection']>['createIndex']>[1] }> }>> = {
     products: { indexes: [{ key: { companyId: 1, sku: 1 }, options: { unique: true, name: 'products_company_sku_unique' } }, { key: { companyId: 1, active: 1 } }] },
     customers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'customers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
     suppliers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'suppliers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
