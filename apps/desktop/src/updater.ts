@@ -21,14 +21,16 @@ export async function checkForUpdate(setStatus: (status: string) => void) {
     if (!response.ok) throw new Error(body?.error ? `${body.error} (HTTP ${response.status})` : `update metadata HTTP ${response.status}`);
     if (!body?.version || !Number.isSafeInteger(body.assetId) || (body.assetId ?? 0) <= 0 || !body.sha256 || !validSha256(body.sha256)) throw new Error('invalid update metadata');
     if (!isNewer(body.version, CURRENT_VERSION)) { setStatus(`Atualizado • v${versionParts(CURRENT_VERSION).join('.')}`); return; }
-    setStatus(`Atualização ${body.version} disponível • instalando…`);
+    setStatus(`Atualização v${versionParts(body.version).join('.')} disponível • instalando…`);
     await invoke('install_update', { assetUrl: `${UPDATE_API}/api/v1/updates/asset/${body.assetId}`, version: body.version, expectedSha256: body.sha256.toLowerCase() });
+    setStatus(`Atualização v${versionParts(body.version).join('.')} instalada • reiniciando…`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown error';
     console.warn('Updater:', message);
     if (/UPDATE_SERVICE_NOT_CONFIGURED/i.test(message)) setStatus('Atualização indisponível • serviço não configurado');
-    else if (/GITHUB_RELEASE_LOOKUP_FAILED|GITHUB_UNAVAILABLE|CHECKSUM|RELEASE_ASSET|RELEASE_DIGEST|INVALID_RELEASE_VERSION/i.test(message)) setStatus('Atualização indisponível • serviço de releases');
-    else if (/AbortError|timeout/i.test(message)) setStatus('Atualização indisponível • tempo esgotado');
-    else setStatus('Atualização indisponível • verifique a API');
+    else if (/GITHUB_RELEASE_LOOKUP_FAILED|GITHUB_UNAVAILABLE|CHECKSUM|RELEASE_ASSET|RELEASE_DIGEST|INVALID_RELEASE_VERSION/i.test(message)) setStatus('Falha ao consultar releases • tente novamente');
+    else if (/AbortError|timeout/i.test(message)) setStatus('Falha na verificação • tempo esgotado');
+    else if (/package installation failed|start package installer|download:|download HTTP|checksum mismatch|write update|restart application/i.test(message)) setStatus('Falha na instalação • a versão atual foi preservada');
+    else setStatus('Falha na atualização • a versão atual foi preservada');
   } finally { checking = false; }
 }
