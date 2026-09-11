@@ -23,22 +23,16 @@ export function tenantCollection<T extends Document & { companyId: string }>(db:
   return {
     findOne: (companyId: string, filter: Filter<T> = {}) => collection.findOne(tenantFilter(companyId, filter)),
     find: (companyId: string, filter: Filter<T> = {}) => collection.find(tenantFilter(companyId, filter)),
-    insertOne: (companyId: string, document: Omit<T, 'companyId'>) =>
-      collection.insertOne({ ...document, companyId } as OptionalUnlessRequiredId<T>),
-    updateOne: (companyId: string, filter: Filter<T>, update: UpdateFilter<T>) => {
-      assertTenantImmutable(update);
-      return collection.updateOne(tenantFilter(companyId, filter), update);
-    },
+    insertOne: (companyId: string, document: Omit<T, 'companyId'>) => collection.insertOne({ ...document, companyId } as OptionalUnlessRequiredId<T>),
+    updateOne: (companyId: string, filter: Filter<T>, update: UpdateFilter<T>) => { assertTenantImmutable(update); return collection.updateOne(tenantFilter(companyId, filter), update); },
+    updateMany: (companyId: string, filter: Filter<T>, update: UpdateFilter<T>) => { assertTenantImmutable(update); return collection.updateMany(tenantFilter(companyId, filter), update); },
     deleteOne: (companyId: string, filter: Filter<T>) => collection.deleteOne(tenantFilter(companyId, filter))
   };
 }
 
 export async function ensureCoreCollections(db: Db): Promise<void> {
   const existing = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name));
-  for (const name of ['companies', 'users', 'audit_logs', 'auth_sessions', 'system']) {
-    if (!existing.has(name)) await db.createCollection(name);
-  }
-
+  for (const name of ['companies', 'users', 'audit_logs', 'auth_sessions', 'system']) if (!existing.has(name)) await db.createCollection(name);
   await db.collection('companies').createIndex({ slug: 1 }, { unique: true, name: 'companies_slug_unique' });
   await db.collection('users').createIndex({ companyId: 1, email: 1 }, { unique: true, name: 'users_company_email_unique' });
   await db.collection('users').createIndex({ companyId: 1, active: 1, role: 1 }, { name: 'users_company_active_role' });
@@ -62,52 +56,11 @@ export async function ensureModuleCollections(db: Db): Promise<void> {
     fiscal_documents: { indexes: [{ key: { companyId: 1, number: 1, series: 1 }, options: { unique: true, name: 'fiscal_company_number_series_unique' } }, { key: { companyId: 1, status: 1, issuedAt: -1 } }, { key: { companyId: 1, accessKey: 1 }, options: { sparse: true, unique: true, name: 'fiscal_access_key_unique' } }] },
     people: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'people_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] }
   };
-
   const existing = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name));
-  for (const [name, definition] of Object.entries(definitions)) {
-    if (!existing.has(name)) await db.createCollection(name);
-    const collection = db.collection(name);
-    for (const index of definition.indexes) await collection.createIndex(index.key, index.options);
-  }
+  for (const [name, definition] of Object.entries(definitions)) { if (!existing.has(name)) await db.createCollection(name); const collection = db.collection(name); for (const index of definition.indexes) await collection.createIndex(index.key, index.options); }
 }
 
-export type CoreCompany = {
-  _id?: string;
-  name: string;
-  slug: string;
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export type CoreUser = {
-  _id?: string;
-  companyId: string;
-  email: string;
-  name: string;
-  passwordHash: string;
-  role: 'owner' | 'admin' | 'manager' | 'user' | 'viewer';
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export type AuditLog = {
-  _id?: string;
-  companyId: string;
-  actorUserId: string;
-  action: string;
-  resource: string;
-  resourceId?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
-};
-
-export type AuthSession = {
-  _id?: string;
-  companyId: string;
-  userId: string;
-  tokenHash: string;
-  createdAt: Date;
-  expiresAt: Date;
-};
+export type CoreCompany = { _id?: string; name: string; slug: string; active: boolean; createdAt: Date; updatedAt: Date };
+export type CoreUser = { _id?: string; companyId: string; email: string; name: string; passwordHash: string; role: 'owner' | 'admin' | 'manager' | 'user' | 'viewer'; active: boolean; createdAt: Date; updatedAt: Date };
+export type AuditLog = { _id?: string; companyId: string; actorUserId: string; action: string; resource: string; resourceId?: string; metadata?: Record<string, unknown>; createdAt: Date };
+export type AuthSession = { _id?: string; companyId: string; userId: string; tokenHash: string; createdAt: Date; expiresAt: Date };
