@@ -1,0 +1,276 @@
+openapi: 3.0.3
+info:
+  title: KORCZAK ERP API
+  version: 1.0.0
+  description: Enterprise API contract for the KORCZAK ERP platform.
+servers:
+  - url: https://kz-erp.onrender.com/api/v1
+security:
+  - bearerAuth: []
+tags:
+  - name: System
+  - name: Master Data
+  - name: Stock
+  - name: Sales
+  - name: Finance
+  - name: Fiscal
+  - name: CRM
+paths:
+  /system:
+    get:
+      security: []
+      tags: [System]
+      responses:
+        '200':
+          description: System metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Envelope' }
+  /stock/balances:
+    get:
+      tags: [Stock]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: warehouseId, in: query, schema: { type: string, format: uuid } }
+        - { name: productId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/Paginated' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /stock/movements:
+    post:
+      tags: [Stock]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/StockMovementInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sales/orders:
+    get:
+      tags: [Sales]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: customerId, in: query, schema: { type: string, format: uuid } }
+      responses:
+        '200': { $ref: '#/components/responses/Paginated' }
+    post:
+      tags: [Sales]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/SalesOrderInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sales/orders/{id}/confirm:
+    post:
+      tags: [Sales]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200': { $ref: '#/components/responses/Ok' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /finance/entries:
+    get:
+      tags: [Finance]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: type, in: query, schema: { type: string, enum: [receivable, payable] } }
+        - { name: status, in: query, schema: { type: string, enum: [open, paid, cancelled] } }
+      responses:
+        '200': { $ref: '#/components/responses/Paginated' }
+    post:
+      tags: [Finance]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/FinancialEntryInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /finance/payments:
+    post:
+      tags: [Finance]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/PaymentInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /fiscal/documents:
+    post:
+      tags: [Fiscal]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/FiscalDocumentInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+  /crm/customers:
+    get:
+      tags: [CRM]
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: search, in: query, schema: { type: string, maxLength: 120 } }
+      responses:
+        '200': { $ref: '#/components/responses/Paginated' }
+    post:
+      tags: [CRM]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json: { schema: { $ref: '#/components/schemas/CustomerInput' } }
+      responses:
+        '201': { $ref: '#/components/responses/Created' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: pageSize
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+  responses:
+    Ok:
+      description: Success
+      content: { application/json: { schema: { $ref: '#/components/schemas/Envelope' } } }
+    Created:
+      description: Created
+      content: { application/json: { schema: { $ref: '#/components/schemas/Envelope' } } }
+    Paginated:
+      description: Paginated result
+      content: { application/json: { schema: { $ref: '#/components/schemas/PaginatedEnvelope' } } }
+    Unauthorized:
+      description: Unauthorized
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Conflict:
+      description: Conflict
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  schemas:
+    Envelope:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: {}
+        requestId: { type: string, format: uuid }
+    PaginatedEnvelope:
+      allOf:
+        - $ref: '#/components/schemas/Envelope'
+        - type: object
+          properties:
+            data:
+              type: object
+              required: [items, total, page, pageSize]
+              properties:
+                items: { type: array, items: {} }
+                total: { type: integer, minimum: 0 }
+                page: { type: integer, minimum: 1 }
+                pageSize: { type: integer, minimum: 1 }
+    ErrorEnvelope:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: {}
+        requestId: { type: string, format: uuid }
+    StockMovementInput:
+      type: object
+      required: [warehouseId, productId, movementType, quantity]
+      properties:
+        warehouseId: { type: string, format: uuid }
+        productId: { type: string, format: uuid }
+        movementType: { type: string, enum: [receipt, issue, transfer_in, transfer_out, adjustment, reservation, release] }
+        quantity: { type: string, pattern: '^[0-9]+(\\.[0-9]{1,6})?$' }
+        referenceType: { type: string, maxLength: 80 }
+        referenceId: { type: string, format: uuid }
+    SalesOrderInput:
+      type: object
+      required: [customerId, currency, items]
+      properties:
+        customerId: { type: string, format: uuid }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity, unitPrice]
+            properties:
+              productId: { type: string, format: uuid }
+              quantity: { type: string }
+              unitPrice: { type: string }
+              discount: { type: string, default: '0.00' }
+    FinancialEntryInput:
+      type: object
+      required: [type, description, amount, dueDate]
+      properties:
+        type: { type: string, enum: [receivable, payable] }
+        description: { type: string, maxLength: 240 }
+        amount: { type: string, pattern: '^[0-9]+(\\.[0-9]{1,2})?$' }
+        dueDate: { type: string, format: date }
+        categoryId: { type: string, format: uuid }
+        reference: { type: string, maxLength: 120 }
+    PaymentInput:
+      type: object
+      required: [entryId, accountId, amount, paidAt, method]
+      properties:
+        entryId: { type: string, format: uuid }
+        accountId: { type: string, format: uuid }
+        amount: { type: string, pattern: '^[0-9]+(\\.[0-9]{1,2})?$' }
+        paidAt: { type: string, format: date-time }
+        method: { type: string, enum: [cash, bank_transfer, pix, card, other] }
+        reference: { type: string, maxLength: 120 }
+    FiscalDocumentInput:
+      type: object
+      required: [documentType, series, number, issueDate, totalAmount]
+      properties:
+        documentType: { type: string, enum: [nfe, nfse, nfce, cte, other] }
+        series: { type: string, maxLength: 20 }
+        number: { type: integer, minimum: 1 }
+        issueDate: { type: string, format: date-time }
+        totalAmount: { type: string }
+        customerId: { type: string, format: uuid }
+    CustomerInput:
+      type: object
+      required: [code, legalName]
+      properties:
+        code: { type: string, maxLength: 60 }
+        legalName: { type: string, maxLength: 200 }
+        tradeName: { type: string, maxLength: 200 }
+        taxId: { type: string, maxLength: 32 }
+        email: { type: string, format: email }
+        phone: { type: string, maxLength: 40 }
