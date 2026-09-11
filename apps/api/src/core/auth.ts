@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Db } from 'mongodb';
 import type { NextFunction, Request, Response } from 'express';
 import type { AuthUser, Role } from './types.js';
 
@@ -31,10 +32,10 @@ export function verifyPassword(password: string, encoded: string): boolean {
   } catch { return false; }
 }
 
-export function createToken(user: AuthUser): string {
+export function createToken(user: AuthUser, jti = crypto.randomUUID()): string {
   const now = Math.floor(Date.now() / 1000);
   const header = b64(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
-  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + ACCESS_TOKEN_TTL_SECONDS, jti: crypto.randomUUID() }));
+  const payload = b64(JSON.stringify({ ...user, iat: now, exp: now + ACCESS_TOKEN_TTL_SECONDS, jti }));
   return `${header}.${payload}.${sign(`${header}.${payload}`)}`;
 }
 
@@ -48,6 +49,15 @@ export function verifyToken(token: string): AuthUser | null {
     const value = JSON.parse(Buffer.from(payload, 'base64url').toString()) as TokenPayload;
     if (value.exp <= Math.floor(Date.now() / 1000) || !Number.isInteger(value.iat) || !value.jti || !value.id || !value.companyId || !value.email || !validRole(value.role)) return null;
     return { id: value.id, companyId: value.companyId, email: value.email, role: value.role, name: value.name };
+  } catch { return null; }
+}
+
+export function tokenJti(token: string): string | null {
+  try {
+    const [, payload] = token.split('.');
+    if (!payload) return null;
+    const value = JSON.parse(Buffer.from(payload, 'base64url').toString()) as Partial<TokenPayload>;
+    return typeof value.jti === 'string' && value.jti.length > 0 ? value.jti : null;
   } catch { return null; }
 }
 
@@ -70,6 +80,28 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   res.locals.user = user;
   next();
+}
+
+export function requireActiveSession(db: Db) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const header = req.header('authorization');
+    const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : '';
+    const user = token ? verifyToken(token) : null;
+    const jti = token ? tokenJti(token) : null;
+    if (!user || !jti) {
+      res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Authentication required' }, requestId: res.locals.requestId });
+      return;
+    }
+    try {
+      const session = await db.collection<{ companyId: string; userId: string; accessJti: string; expiresAt: Date }>('auth_sessions').findOne({ companyId: user.companyId, userId: user.id, accessJti: jti, expiresAt: { $gt: new Date() } }, { projection: { _id: 1 } });
+      if (!session) {
+        res.status(401).json({ error: { code: 'SESSION_REVOKED', message: 'Session is no longer active' }, requestId: res.locals.requestId });
+        return;
+      }
+      res.locals.user = user;
+      next();
+    } catch (error) { next(error); }
+  };
 }
 
 export function validRole(value: unknown): value is Role {
