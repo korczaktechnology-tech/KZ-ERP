@@ -1,4 +1,4 @@
-# KZ-ERP API contract — F0/F1/F2/F3/F4/F5
+# KZ-ERP API contract — F0/F1/F2/F3/F4/F5/F6
 
 The public API is versioned under `/api/v1` and uses JSON envelopes.
 
@@ -42,92 +42,82 @@ All routes below require an authenticated, active user and active company.
 
 All F2 routes require an authenticated active tenant. Read operations require `master-data:read`; write operations require `master-data:write`.
 
-### Parties
-
-- `GET /api/v1/master-data/parties` — paginated unified party registry.
-- `GET /api/v1/master-data/parties/:id` — party detail.
-- `POST /api/v1/master-data/parties` — create a person/company party with one or more roles.
-- `PATCH /api/v1/master-data/parties/:id` — update party data.
-- `DELETE /api/v1/master-data/parties/:id` — logical deactivation; linked addresses are deactivated.
-
-### Addresses
-
-- `GET /api/v1/master-data/parties/:partyId/addresses` — addresses belonging to one party.
-- `POST /api/v1/master-data/parties/:partyId/addresses` — create an address for a party.
-- `PATCH /api/v1/master-data/addresses/:id` — update an address.
-- `DELETE /api/v1/master-data/addresses/:id` — logical deactivation.
-
-Address types: `billing`, `shipping`, `commercial`, `residential`, `other`.
-
-### Products
-
-- `GET /api/v1/master-data/products` — paginated product list.
-- `POST /api/v1/master-data/products` — create product; SKU is unique inside the tenant.
-- `PATCH /api/v1/master-data/products/:id` — update product.
-- `DELETE /api/v1/master-data/products/:id` — logical deactivation.
+- Parties: unified party registry, detail, create, update and logical deactivation.
+- Addresses: tenant-scoped create, list, update and logical deactivation.
+- Products: tenant-scoped create, list, update and logical deactivation.
+- Units: tenant-scoped create, list, update and logical deactivation.
+- Price lists/prices: tenant-scoped CRUD with logical deactivation.
 
 Product prices use BSON `Decimal128` and are accepted/exposed as decimal strings to preserve monetary precision.
-
-### Units
-
-- `GET /api/v1/master-data/units` — paginated units of measure.
-- `POST /api/v1/master-data/units` — create unit.
-- `PATCH /api/v1/master-data/units/:id` — update unit.
-- `DELETE /api/v1/master-data/units/:id` — logical deactivation.
-
-Unit kinds: `unit`, `weight`, `volume`, `length`, `area`, `time`, `other`.
-
-### Price lists and prices
-
-- `GET /api/v1/master-data/price-lists` — paginated price-list catalog.
-- `POST /api/v1/master-data/price-lists` — create a price list.
-- `PATCH /api/v1/master-data/price-lists/:id` — update a price list.
-- `DELETE /api/v1/master-data/price-lists/:id` — logical deactivation and deactivation of its prices.
-- `GET /api/v1/master-data/price-lists/:priceListId/prices` — list prices belonging to a list.
-- `POST /api/v1/master-data/price-lists/:priceListId/prices` — create a product price.
-- `PATCH /api/v1/master-data/prices/:id` — update amount, minimum quantity or active state.
-- `DELETE /api/v1/master-data/prices/:id` — logical deactivation.
 
 ## F3 Stock
 
 All F3 routes require an authenticated active tenant. Read operations require `stock:read`; write operations require `stock:write`.
 
-### Warehouses and balances
+- Warehouses/balances: list, minimum threshold and summary.
+- Movements: receipt, issue, adjustment and transfer, with UUID `Idempotency-Key`.
+- Reservations: create/list/release with UUID `Idempotency-Key`.
 
-- `GET /api/v1/stock/warehouses` — active warehouses available to the current tenant.
-- `GET /api/v1/stock/balances` — paginated balances, optionally filtered by `warehouseId` and/or `productId`.
-- `PATCH /api/v1/stock/balances/:warehouseId/:productId/minimum` — changes the minimum stock threshold.
-- `GET /api/v1/stock/summary` — exact-precision operational totals and count of balances at or below minimum.
-
-### Movements
-
-- `GET /api/v1/stock/movements` — paginated movement ledger; optional filters `productId`, `warehouseId`, `type`.
-- `POST /api/v1/stock/movements` — records `receipt`, `issue`, `adjustment` or `transfer`.
-
-Quantities are BSON `Decimal128` and API responses use decimal strings. A reduction is rejected with HTTP 409 when available stock would become negative. Transfers require distinct source/destination warehouses. `Idempotency-Key` is supported for mutation retries.
-
-### Reservations
-
-- `GET /api/v1/stock/reservations` — active reservations, optionally filtered by product/warehouse.
-- `POST /api/v1/stock/reservations` — reserves available stock; supports `Idempotency-Key`.
-- `DELETE /api/v1/stock/reservations/:id` — releases an active reservation.
+Quantities use BSON `Decimal128` and API responses use decimal strings. Reductions that would make available stock negative return HTTP 409.
 
 ## F4 Sales
 
 All F4 routes require an authenticated active tenant. Read operations require `sales:read`; writes require `sales:write`.
 
-- `GET /api/v1/sales/orders` — paginated order list; filters include `status` and `customerId`.
-- `GET /api/v1/sales/orders/:id` — tenant-scoped order detail.
-- `POST /api/v1/sales/orders` — creates a `draft` order; supports `Idempotency-Key`.
-- `PATCH /api/v1/sales/orders/:id` — edits customer/lines while the order is `draft`.
-- `POST /api/v1/sales/orders/:id/confirm` — transitions `draft` to `confirmed`.
-- `POST /api/v1/sales/orders/:id/cancel` — transitions `draft` or `confirmed` to `cancelled`.
+- Orders: list/detail/create draft/update draft/confirm/cancel.
+- Customer and product references are validated inside the authenticated tenant.
+- Critical create operations support UUID `Idempotency-Key`.
+- Prices and totals use BSON `Decimal128` with deterministic cent rounding.
 
-Quantities use up to 6 decimal places; prices, line totals and order totals use BSON `Decimal128` with deterministic cent rounding. Customer and products must belong to the authenticated tenant and be active. Reusing an idempotency key with a different payload returns `409 CONFLICT`.
+## F5 SCM — Supply Chain Management
 
-## F5 Finance
+All F5 routes require an authenticated active tenant. Read operations require `scm:read`; write operations require `scm:write`.
 
-All F5 routes require an authenticated active tenant. Read operations require `finance:read`; writes require `finance:write`.
+### Purchase requests
+
+- `GET /api/v1/scm/requests` — paginated requests; optional `status` filter.
+- `POST /api/v1/scm/requests` — creates a draft purchase request; supports `Idempotency-Key`.
+- `POST /api/v1/scm/requests/:id/submit` — draft → submitted.
+- `POST /api/v1/scm/requests/:id/approve` — submitted → approved.
+- `POST /api/v1/scm/requests/:id/reject` — submitted → rejected.
+- `POST /api/v1/scm/requests/:id/cancel` — draft/submitted → cancelled.
+
+### Quotations
+
+- `GET /api/v1/scm/quotes` — paginated quotations; optional request, supplier and status filters.
+- `POST /api/v1/scm/quotes` — creates a supplier quotation for a submitted/approved request; supports `Idempotency-Key`.
+- `POST /api/v1/scm/quotes/:id/submit` — draft → submitted.
+- `POST /api/v1/scm/quotes/:id/accept` — submitted → accepted.
+- `POST /api/v1/scm/quotes/:id/reject` — submitted → rejected.
+
+### Purchase orders
+
+- `GET /api/v1/scm/orders` — paginated purchase orders; optional supplier/status filters.
+- `POST /api/v1/scm/orders` — creates a draft purchase order; an optional `quoteId` must reference an accepted quote from the same supplier; supports `Idempotency-Key`.
+- `POST /api/v1/scm/orders/:id/approve` — draft → approved.
+- `POST /api/v1/scm/orders/:id/order` — approved → ordered.
+- `POST /api/v1/scm/orders/:id/cancel` — draft → cancelled.
+
+### Receiving
+
+- `GET /api/v1/scm/receipts` — paginated receipts; optional purchase order and warehouse filters.
+- `POST /api/v1/scm/receipts` — receives products against an ordered/partially received purchase order into an active warehouse; supports `Idempotency-Key`.
+
+Receiving is transactional: the receipt, purchase-order received quantities/status, stock balance increase, stock movement and audit/outbox records are committed together. A receipt cannot exceed the ordered quantity, and concurrent order changes are rejected rather than silently overwriting state.
+
+### F5 invariants
+
+- Supplier, product and warehouse references are tenant-scoped and active when required.
+- Purchase request, quotation and order state transitions are explicit and invalid transitions return HTTP 409.
+- Decimal quantities support up to 6 fractional places; money supports up to 2.
+- UUID idempotency keys are persisted with operation hashes; reusing a key with a different payload returns HTTP 409.
+- Audit records are written for every SCM mutation.
+- Critical SCM business changes create pending outbox events in `scm_outbox_events` for asynchronous publication.
+- Tenant-owned persistence binds `companyId` to the authenticated context.
+
+## F6 Finance
+
+All F6 routes require an authenticated active tenant. Read operations require `finance:read`; writes require `finance:write`.
 
 - `GET /api/v1/finance/entries` — paginated receivable/payable entries; filters `type` and `status`.
 - `GET /api/v1/finance/entries/:id` — tenant-scoped entry detail.
@@ -141,7 +131,7 @@ Amounts are BSON `Decimal128` and exposed as decimal strings. Financial mutation
 
 ## Compatibility master-data endpoints
 
-The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` endpoints remain available for the current desktop flow. They are tenant-isolated and protected by the F2 permissions. The unified `parties` model is the canonical F2 master for new integrations.
+The existing `/api/v1/master-data/customers`, `/suppliers` and `/warehouses` endpoints remain available for the current desktop flow. They are tenant-isolated and protected by F2 permissions. The unified `parties` model is the canonical F2 master for new integrations.
 
 ## Tenant isolation
 
