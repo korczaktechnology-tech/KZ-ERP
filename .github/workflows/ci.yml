@@ -1,18 +1,14 @@
 name: CI
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
 permissions:
   contents: read
-
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   api:
     name: API check, test and build
@@ -36,7 +32,6 @@ jobs:
       - name: Production build
         working-directory: apps/api
         run: npm run build
-
   desktop:
     name: Desktop type check and build
     runs-on: ubuntu-22.04
@@ -53,7 +48,6 @@ jobs:
       - name: Type check and frontend build
         working-directory: apps/desktop
         run: npm run build
-
   tauri:
     name: Linux Tauri package validation
     runs-on: ubuntu-22.04
