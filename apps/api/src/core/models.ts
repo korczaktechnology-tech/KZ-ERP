@@ -7,6 +7,22 @@ export type Customer = BaseDocument & { code: string; name: string; document?: s
 export type Supplier = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
 export type Warehouse = BaseDocument & { code: string; name: string; active: boolean };
 export type StockBalance = BaseDocument & { warehouseId: Id; productId: Id; quantity: Decimal128; reservedQuantity: Decimal128; minimumQuantity: Decimal128 };
+export type StockMovement = {
+  _id?: Id;
+  companyId: Id;
+  type: 'receipt' | 'issue' | 'adjustment' | 'transfer';
+  productId: Id;
+  warehouseId: Id;
+  destinationWarehouseId?: Id;
+  quantity: Decimal128;
+  direction?: 'increase' | 'decrease';
+  reason?: string;
+  reference?: string;
+  idempotencyKey?: string;
+  operationHash?: string;
+  actorUserId: Id;
+  createdAt: Date;
+};
 export type DocumentLine = { productId: Id; description: string; quantity: Decimal128; unitPrice: Decimal128; total: Decimal128 };
 export type SalesOrder = BaseDocument & { number: string; customerId: Id; status: 'draft' | 'confirmed' | 'cancelled' | 'completed'; lines: DocumentLine[]; subtotal: Decimal128; total: Decimal128; idempotencyKey?: string; operationHash?: string };
 export type FinancialEntry = BaseDocument & { description: string; type: 'receivable' | 'payable'; status: 'open' | 'paid' | 'cancelled'; amount: Decimal128; dueDate: Date; paidAt?: Date; reference?: string; idempotencyKey?: string; operationHash?: string };
