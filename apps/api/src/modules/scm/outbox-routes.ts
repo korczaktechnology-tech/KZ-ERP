@@ -55,18 +55,19 @@ export function scmOutboxRouter(db: Db): Router {
     } catch (e) { next(e); }
   });
 
-  router.post('/:id/replay', async (_req, res, next) => {
+  router.post('/:id/replay', async (req, res, next) => {
     try {
       if (!can(res, 'scm:write')) { fail(res, 403, 'FORBIDDEN'); return; }
       const a = actor(res);
-      const id = eventId.parse(_req.params.id);
+      const id = eventId.parse(req.params.id);
       const event = await events.findOne(a.companyId, { _id: id });
       if (!event) { fail(res, 404, 'NOT_FOUND', 'SCM outbox event not found'); return; }
       if (event.status !== 'dead_letter') { fail(res, 409, 'CONFLICT', 'Only dead-letter events can be replayed'); return; }
 
-      const updated = await events.findOneAndUpdate(
+      const now = new Date();
+      const updated = await db.collection<ScmOutboxEvent>('scm_outbox_events').findOneAndUpdate(
         { companyId: a.companyId, _id: id, status: 'dead_letter' },
-        { $set: { status: 'pending', attempts: 0, availableAt: new Date(), updatedAt: new Date() }, $unset: { lastError: '' } },
+        { $set: { status: 'pending', attempts: 0, availableAt: now, updatedAt: now }, $unset: { lastError: '' } },
         { returnDocument: 'after' }
       );
       if (!updated) { fail(res, 409, 'CONFLICT', 'Outbox event changed before replay'); return; }
@@ -74,7 +75,7 @@ export function scmOutboxRouter(db: Db): Router {
       await db.collection<Audit>('audit_logs').insertOne({
         _id: randomUUID(), companyId: a.companyId, actorUserId: a.id,
         action: 'scm.outbox.replay', resource: 'scm_outbox_event', resourceId: id,
-        metadata: { type: event.type, aggregateType: event.aggregateType, aggregateId: event.aggregateId }, createdAt: new Date()
+        metadata: { type: event.type, aggregateType: event.aggregateType, aggregateId: event.aggregateId }, createdAt: now
       });
       ok(res, { event: { id: updated._id, status: updated.status, attempts: updated.attempts, availableAt: updated.availableAt } });
     } catch (e) { next(e); }
