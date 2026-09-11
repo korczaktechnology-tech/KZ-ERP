@@ -12,5 +12,6 @@ export type SalesOrder = BaseDocument & { number: string; customerId: Id; status
 export type FinancialEntry = BaseDocument & { description: string; type: 'receivable' | 'payable'; status: 'open' | 'paid' | 'cancelled'; amount: Decimal128; dueDate: Date; paidAt?: Date; reference?: string; idempotencyKey?: string; operationHash?: string };
 export type FiscalDocument = BaseDocument & { number: string; series?: string; type: 'invoice' | 'service_invoice' | 'other'; status: 'draft' | 'issued' | 'cancelled'; accessKey?: string; issuedAt?: Date };
 export type PeopleRecord = BaseDocument & { code: string; name: string; email?: string; active: boolean };
-export type ModuleCollectionMap = { products: Product; customers: Customer; suppliers: Supplier; warehouses: Warehouse; stock_balances: StockBalance; sales_orders: SalesOrder; financial_entries: FinancialEntry; fiscal_documents: FiscalDocument; people: PeopleRecord };
+export type ScmAggregate = BaseDocument & { number: string; status: string; idempotencyKey?: string; operationHash?: string };
+export type ModuleCollectionMap = { products: Product; customers: Customer; suppliers: Supplier; warehouses: Warehouse; stock_balances: StockBalance; sales_orders: SalesOrder; financial_entries: FinancialEntry; fiscal_documents: FiscalDocument; people: PeopleRecord; scm_purchase_requests: ScmAggregate; scm_purchase_quotes: ScmAggregate; scm_purchase_orders: ScmAggregate; scm_purchase_receipts: ScmAggregate };
 export type TenantDocument = Document & { companyId: string };
