@@ -13,6 +13,8 @@ import { salesRouter } from './modules/sales/routes.js';
 import { stockRouter } from './modules/stock/routes.js';
 import { ensureStockCollections } from './modules/stock/collections.js';
 import { financeRouter } from './modules/finance/routes.js';
+import { scmRouter } from './modules/scm/routes.js';
+import { ensureScmCollections } from './modules/scm/collections.js';
 
 const PORT = Number(process.env.PORT ?? 10000);
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -37,7 +39,7 @@ const app=express();app.disable('x-powered-by');app.use(requestId);app.use(cors(
 app.get('/health/live',(_req,res)=>res.json({data:{status:'ok',service:'kz-erp-api',check:'live'},requestId:res.locals.requestId}));
 app.get('/health/ready',async(_req,res)=>{if(!databaseReady)return res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:databaseError||'Database is starting'},requestId:res.locals.requestId});try{await db.command({ping:1});res.json({data:{status:'ok',service:'kz-erp-api',database:'ok',version:APP_VERSION,check:'ready'},requestId:res.locals.requestId});}catch{databaseReady=false;res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:'Database unavailable'},requestId:res.locals.requestId});}});
 app.get('/health',async(_req,res)=>{if(!databaseReady)return res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:databaseError||'Database is starting'},requestId:res.locals.requestId});try{await db.command({ping:1});res.json({data:{status:'ok',service:'kz-erp-api',database:'ok',version:APP_VERSION},requestId:res.locals.requestId});}catch{databaseReady=false;res.status(503).json({error:{code:'SERVICE_UNAVAILABLE',message:'Database unavailable'},requestId:res.locals.requestId});}});
-app.get('/api/v1/system',(_req,res)=>res.json({data:{name:'KORCZAK ERP',version:APP_VERSION,integrationNamespaces:['CORE','WMS','TMS','CRM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS']},requestId:res.locals.requestId}));
+app.get('/api/v1/system',(_req,res)=>res.json({data:{name:'KORCZAK ERP',version:APP_VERSION,integrationNamespaces:['CORE','WMS','TMS','CRM','SCM','FINANCE','FISCAL','PEOPLE','SALES','COMMERCE','QUALITY','MAINTENANCE','DOCUMENTS','ASSETS','FIELD','SERVICE','PROJECTS']},requestId:res.locals.requestId}));
 const databaseRequired=(_req:express.Request,res:express.Response,next:express.NextFunction)=>databaseReady?next():res.status(503).json({error:{code:'DATABASE_NOT_READY',message:databaseError||'Database is starting'},requestId:res.locals.requestId});
 const activeSession=requireActiveSession(db);
 const coreSessionGuard=(req:express.Request,res:express.Response,next:express.NextFunction)=>req.path.startsWith('/auth/')?next():activeSession(req,res,next);
@@ -47,7 +49,8 @@ app.use('/api/v1/master-data',databaseRequired,activeSession,masterDataRouter(db
 app.use('/api/v1/stock',databaseRequired,activeSession,stockRouter(db));
 app.use('/api/v1/sales',databaseRequired,activeSession,salesRouter(db));
 app.use('/api/v1/finance',databaseRequired,activeSession,financeRouter(db));
+app.use('/api/v1/scm',databaseRequired,activeSession,scmRouter(db));
 app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Resource not found'},requestId:res.locals.requestId}));app.use(errorMiddleware);
 const server=app.listen(PORT,'0.0.0.0',()=>console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`));server.keepAliveTimeout=65000;server.headersTimeout=66000;
-async function initializeDatabase(){for(let attempt=1;attempt<=5;attempt+=1){try{await mongo.connect();await ensureCoreCollections(db);await ensureModuleCollections(db);await ensureMasterDataCollections(db);await ensureStockCollections(db);databaseReady=true;databaseError='';console.log('KZ-ERP MongoDB ready');return;}catch(error){databaseReady=false;databaseError=error instanceof Error?error.message:'Database initialization failed';console.error(`MongoDB initialization attempt ${attempt}/5 failed:`,error);if(attempt<5)await new Promise(resolve=>setTimeout(resolve,3000));}}console.error('KZ-ERP API started without a ready database; health/ready remains 503.');}
+async function initializeDatabase(){for(let attempt=1;attempt<=5;attempt+=1){try{await mongo.connect();await ensureCoreCollections(db);await ensureModuleCollections(db);await ensureMasterDataCollections(db);await ensureStockCollections(db);await ensureScmCollections(db);databaseReady=true;databaseError='';console.log('KZ-ERP MongoDB ready');return;}catch(error){databaseReady=false;databaseError=error instanceof Error?error.message:'Database initialization failed';console.error(`MongoDB initialization attempt ${attempt}/5 failed:`,error);if(attempt<5)await new Promise(resolve=>setTimeout(resolve,3000));}}console.error('KZ-ERP API started without a ready database; health/ready remains 503.');}
 void initializeDatabase();const shutdown=async(signal:string)=>{console.log(`${signal}: shutting down`);server.close(async()=>{await mongo.close().catch(()=>undefined);process.exit(0);});};process.on('SIGTERM',()=>void shutdown('SIGTERM'));process.on('SIGINT',()=>void shutdown('SIGINT'));
