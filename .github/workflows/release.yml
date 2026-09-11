@@ -54,26 +54,28 @@ jobs:
 
       - name: Determine release version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISPATCH_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [ -n "$DISPATCH_VERSION" ]; then
             VERSION="${DISPATCH_VERSION#v}"
           else
-            LATEST_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --exclude-drafts --exclude-pre-releases --json tagName --jq '.[0].tagName // empty')"
-            if [ -n "$LATEST_TAG" ]; then
-              BASE="${LATEST_TAG#v}"
-              if ! git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then git fetch origin "refs/tags/$LATEST_TAG:refs/tags/$LATEST_TAG"; fi
-              COMMITS_SINCE="$(git rev-list --count "$LATEST_TAG..$GITHUB_SHA")"
-            else
-              BASE="$(node -p "require('./apps/desktop/package.json').version")"
-              COMMITS_SINCE=1
-            fi
+            BASE="$(node -p "require('./apps/desktop/package.json').version")"
             if [[ ! "$BASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "ERRO: versão base inválida: $BASE"; exit 1; fi
             IFS='.' read -r MAJOR MINOR PATCH <<< "$BASE"
-            if [ "$COMMITS_SINCE" -lt 1 ]; then COMMITS_SINCE=1; fi
-            VERSION="$MAJOR.$MINOR.$((PATCH + COMMITS_SINCE))"
+            COMMIT_NUMBER="$(git rev-list --count "$GITHUB_SHA")"
+            if [ "$COMMIT_NUMBER" -lt 1 ]; then echo "ERRO: não foi possível determinar a posição do commit"; exit 1; fi
+            if [ "$COMMIT_NUMBER" -le "$PATCH" ]; then
+              LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n 1 || true)"
+              if [ -n "$LATEST_TAG" ]; then
+                LATEST_VERSION="${LATEST_TAG#v}"
+                if [[ "$LATEST_VERSION" =~ ^$MAJOR\.$MINOR\.[0-9]+$ ]]; then
+                  LATEST_PATCH="${LATEST_VERSION##*.}"
+                  if [ "$LATEST_PATCH" -ge "$COMMIT_NUMBER" ]; then COMMIT_NUMBER=$((LATEST_PATCH + 1)); fi
+                fi
+              fi
+            fi
+            VERSION="$MAJOR.$MINOR.$COMMIT_NUMBER"
           fi
           if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "ERRO: versão inválida: $VERSION"; exit 1; fi
           echo "BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
