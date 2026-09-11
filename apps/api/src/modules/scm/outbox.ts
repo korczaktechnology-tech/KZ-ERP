@@ -12,6 +12,8 @@ type PublishedIntegrationEvent = {
   sourceEventId: string;
   companyId: string;
   type: string;
+  schemaVersion: number;
+  correlationId: string;
   aggregateType: string;
   aggregateId: string;
   payload: Record<string, unknown>;
@@ -19,11 +21,6 @@ type PublishedIntegrationEvent = {
   createdAt: Date;
 };
 
-/**
- * Durable internal publication target for the modular-monolith boundary.
- * Consumers can later be replaced by a broker/Connect adapter without
- * changing the transactional outbox contract.
- */
 async function publishInternal(db: Db, event: ScmOutboxEvent): Promise<void> {
   const collection = db.collection<PublishedIntegrationEvent>('integration_events');
   try {
@@ -32,6 +29,8 @@ async function publishInternal(db: Db, event: ScmOutboxEvent): Promise<void> {
       sourceEventId: event._id,
       companyId: event.companyId,
       type: event.type,
+      schemaVersion: event.schemaVersion ?? 1,
+      correlationId: event.correlationId ?? event.aggregateId,
       aggregateType: event.aggregateType,
       aggregateId: event.aggregateId,
       payload: event.payload,
@@ -81,10 +80,8 @@ export async function ensureScmOutboxPublicationCollections(db: Db): Promise<voi
   await collection.createIndex({ sourceEventId: 1 }, { unique: true, name: 'integration_events_source_unique' });
   await collection.createIndex({ companyId: 1, createdAt: -1 }, { name: 'integration_events_company_created' });
   await collection.createIndex({ companyId: 1, type: 1, createdAt: -1 }, { name: 'integration_events_company_type_created' });
+  await collection.createIndex({ companyId: 1, correlationId: 1, createdAt: -1 }, { name: 'integration_events_company_correlation_created' });
 
-  // Recover events abandoned by a crashed worker. The unique sourceEventId
-  // makes publication itself idempotent if the previous worker died after
-  // writing integration_events but before marking the outbox row published.
   await db.collection<ScmOutboxEvent>('scm_outbox_events').updateMany(
     { status: 'processing', updatedAt: { $lt: new Date(Date.now() - PROCESSING_LEASE_MS) } },
     { $set: { status: 'pending', availableAt: new Date(), updatedAt: new Date(), lastError: 'Recovered stale processing lease' } }
