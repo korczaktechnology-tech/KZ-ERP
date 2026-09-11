@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { Db, Document } from 'mongodb';
+import type { Db } from 'mongodb';
 import type { ScmOutboxEvent } from './types.js';
 
 const MAX_ATTEMPTS = 8;
 const POLL_INTERVAL_MS = 2_000;
 const BASE_BACKOFF_MS = 1_000;
+const PROCESSING_LEASE_MS = 60_000;
 
 type PublishedIntegrationEvent = {
   _id: string;
@@ -25,7 +26,6 @@ type PublishedIntegrationEvent = {
  */
 async function publishInternal(db: Db, event: ScmOutboxEvent): Promise<void> {
   const collection = db.collection<PublishedIntegrationEvent>('integration_events');
-  const now = new Date();
   try {
     await collection.insertOne({
       _id: randomUUID(),
@@ -35,7 +35,7 @@ async function publishInternal(db: Db, event: ScmOutboxEvent): Promise<void> {
       aggregateType: event.aggregateType,
       aggregateId: event.aggregateId,
       payload: event.payload,
-      publishedAt: now,
+      publishedAt: new Date(),
       createdAt: event.createdAt
     });
   } catch (error) {
@@ -58,20 +58,17 @@ async function processOne(db: Db): Promise<boolean> {
     await publishInternal(db, claimed);
     await collection.updateOne(
       { _id: claimed._id, status: 'processing' },
-      { $set: { status: 'published', updatedAt: new Date() } }
+      { $set: { status: 'published', updatedAt: new Date() }, $unset: { lastError: '' } }
     );
   } catch (error) {
     const attempts = claimed.attempts;
     const terminal = attempts >= MAX_ATTEMPTS;
-    const delay = BASE_BACKOFF_MS * 2 ** Math.min(attempts - 1, 6);
+    const nextUpdate = terminal
+      ? { status: 'dead_letter' as const, updatedAt: new Date() }
+      : { status: 'pending' as const, availableAt: new Date(Date.now() + BASE_BACKOFF_MS * 2 ** Math.min(attempts - 1, 6)), updatedAt: new Date() };
     await collection.updateOne(
       { _id: claimed._id, status: 'processing' },
-      {
-        $set: terminal
-          ? { status: 'dead_letter', updatedAt: new Date() }
-          : { status: 'pending', availableAt: new Date(Date.now() + delay), updatedAt: new Date() },
-        $setOnInsert: { lastError: error instanceof Error ? error.message : String(error) }
-      } as Document
+      { $set: { ...nextUpdate, lastError: error instanceof Error ? error.message : String(error) } }
     );
   }
   return true;
@@ -84,6 +81,14 @@ export async function ensureScmOutboxPublicationCollections(db: Db): Promise<voi
   await collection.createIndex({ sourceEventId: 1 }, { unique: true, name: 'integration_events_source_unique' });
   await collection.createIndex({ companyId: 1, createdAt: -1 }, { name: 'integration_events_company_created' });
   await collection.createIndex({ companyId: 1, type: 1, createdAt: -1 }, { name: 'integration_events_company_type_created' });
+
+  // Recover events abandoned by a crashed worker. The unique sourceEventId
+  // makes publication itself idempotent if the previous worker died after
+  // writing integration_events but before marking the outbox row published.
+  await db.collection<ScmOutboxEvent>('scm_outbox_events').updateMany(
+    { status: 'processing', updatedAt: { $lt: new Date(Date.now() - PROCESSING_LEASE_MS) } },
+    { $set: { status: 'pending', availableAt: new Date(), updatedAt: new Date(), lastError: 'Recovered stale processing lease' } }
+  );
 }
 
 export function startScmOutboxWorker(db: Db): () => void {
