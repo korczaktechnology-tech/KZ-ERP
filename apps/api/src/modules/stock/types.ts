@@ -24,6 +24,7 @@ export type StockMovement = {
   reason?: string;
   reference?: string;
   idempotencyKey?: string;
+  operationHash?: string;
   actorUserId: string;
   createdAt: Date;
 };
@@ -36,6 +37,7 @@ export type StockReservation = {
   quantity: Decimal128;
   reference?: string;
   idempotencyKey?: string;
+  operationHash?: string;
   active: boolean;
   actorUserId: string;
   createdAt: Date;
