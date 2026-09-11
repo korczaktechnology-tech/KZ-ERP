@@ -14,7 +14,7 @@ import { enqueueFinanceEvent } from './outbox.js';
 const id=z.string().uuid(); const idem=z.string().uuid();
 const money=z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/).refine(v=>v!=='0','amount must be greater than zero');
 const date=z.string().datetime({offset:true});
-const accountSchema=z.object({code:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),type:z.enum(['cash','bank','wallet','credit_card']),currency:z.string().trim().regex(/^[A-Z]{3}$/),openingBalance:money.default('0')});
+const accountSchema=z.object({code:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),type:z.enum(['cash','bank','wallet','credit_card']),currency:z.string().trim().regex(/^[A-Z]{3}$/),openingBalance:z.string().trim().regex(/^-?\d+(?:\.\d{1,2})?$/).default('0')});
 const categorySchema=z.object({code:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),direction:z.enum(['income','expense'])});
 const paymentSchema=z.object({entryId:id,accountId:id,amount:money,paidAt:date,method:z.enum(['cash','bank_transfer','pix','card','other']),reference:z.string().trim().max(120).optional()});
 const transferSchema=z.object({fromAccountId:id,toAccountId:id,amount:money,transferredAt:date,reference:z.string().trim().max(120).optional()}).refine(v=>v.fromAccountId!==v.toAccountId,'source and destination accounts must differ');
@@ -24,7 +24,7 @@ function read(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(
 function write(res:Parameters<typeof requireAuth>[1]){return hasPermission(actor(res).role,'finance:write');}
 function key(req:Parameters<typeof requireAuth>[0]){const raw=req.get('Idempotency-Key');return raw?idem.parse(raw):undefined;}
 function hash(v:unknown){return createHash('sha256').update(JSON.stringify(v)).digest('hex');}
-function cents(v:Decimal128){const [w='0',f='']=v.toString().split('.');return BigInt(w)*100n+BigInt((f+'00').slice(0,2));}
+function cents(v:Decimal128):bigint{const [w='0',f='']=v.toString().split('.');const fraction=(f+'00').slice(0,2);return BigInt(w)*100n+BigInt(fraction);}
 function decimal(value:bigint){const sign=value<0n?'-':'';const n=value<0n?-value:value;return Decimal128.fromString(`${sign}${n/100n}.${(n%100n).toString().padStart(2,'0')}`);}
 function safeAccount(v:FinanceAccount){return {...v,openingBalance:v.openingBalance.toString()};}
 function audit(db:Db,companyId:string,actorUserId:string,action:string,resource:string,resourceId:string,metadata?:Record<string,unknown>){return db.collection('audit_logs').insertOne({_id:randomUUID(),companyId,actorUserId,action,resource,resourceId,metadata,createdAt:new Date()},{session:currentMongoSession()});}
