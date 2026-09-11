@@ -1,12 +1,25 @@
 # Changelog
 
-## Unreleased — F5 Finance hardening
+## Unreleased — F5 SCM hardening / F6 Finance
+
+### F5 — SCM
+
+- Added purchase requests with explicit lifecycle transitions.
+- Added supplier quotations, acceptance/rejection and purchase orders.
+- Added partial and full purchase receiving with transactional stock update.
+- Added tenant isolation, RBAC, UUID idempotency and audit coverage for SCM.
+- Added exact quantity/money precision rules and duplicate/over-receipt protection.
+- Added transactional outbox with durable worker, exponential retry, dead-letter and stale-lease recovery.
+- Added versioned event envelope support, operational outbox listing and audited dead-letter replay.
+- Added SCM event contract and ADR for the current transactional SCM → Stock boundary.
+
+### F6 — Finance
 
 - Added the first operational finance module for accounts receivable and payable.
 - Added real financial entry creation, editing, payment and cancellation flows.
 - Added exact cent-based aggregation on top of MongoDB `Decimal128` values to avoid binary floating-point totals.
 - Added tenant isolation, RBAC, UUID idempotency and audit coverage for finance operations.
-- Added the desktop Finance interface and F5 acceptance/runbook documentation.
+- Added the desktop Finance interface and F6 acceptance/runbook documentation.
 
 ## 0.1.3
 
