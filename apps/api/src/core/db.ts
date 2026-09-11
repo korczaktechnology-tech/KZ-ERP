@@ -50,7 +50,6 @@ export async function ensureModuleCollections(db: Db): Promise<void> {
     customers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'customers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
     suppliers: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'suppliers_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
     warehouses: { indexes: [{ key: { companyId: 1, code: 1 }, options: { unique: true, name: 'warehouses_company_code_unique' } }, { key: { companyId: 1, active: 1 } }] },
-    stock_balances: { indexes: [{ key: { companyId: 1, warehouseId: 1, productId: 1 }, options: { unique: true, name: 'stock_company_warehouse_product_unique' } }, { key: { companyId: 1, productId: 1 } }] },
     sales_orders: { indexes: [{ key: { companyId: 1, number: 1 }, options: { unique: true, name: 'sales_orders_company_number_unique' } }, { key: { companyId: 1, status: 1, createdAt: -1 } }, { key: { companyId: 1, customerId: 1, createdAt: -1 } }] },
     financial_entries: { indexes: [{ key: { companyId: 1, type: 1, status: 1, dueDate: 1 } }, { key: { companyId: 1, reference: 1 } }] },
     fiscal_documents: { indexes: [{ key: { companyId: 1, number: 1, series: 1 }, options: { unique: true, name: 'fiscal_company_number_series_unique' } }, { key: { companyId: 1, status: 1, issuedAt: -1 } }, { key: { companyId: 1, accessKey: 1 }, options: { sparse: true, unique: true, name: 'fiscal_access_key_unique' } }] },
