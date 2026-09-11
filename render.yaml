@@ -4,7 +4,7 @@ services:
     runtime: docker
     rootDir: apps/api
     plan: free
-    healthCheckPath: /health
+    healthCheckPath: /health/live
     envVars:
       - key: MONGODB_URI
         sync: false
