@@ -14,6 +14,7 @@ import { stockRouter } from './modules/stock/routes.js';
 import { ensureStockCollections } from './modules/stock/collections.js';
 import { financeRouter } from './modules/finance/routes.js';
 import { scmRouter } from './modules/scm/routes.js';
+import { scmOutboxRouter } from './modules/scm/outbox-routes.js';
 import { ensureScmCollections } from './modules/scm/collections.js';
 import { ensureScmOutboxPublicationCollections, startScmOutboxWorker } from './modules/scm/outbox.js';
 
@@ -51,6 +52,7 @@ app.use('/api/v1/stock',databaseRequired,activeSession,stockRouter(db));
 app.use('/api/v1/sales',databaseRequired,activeSession,salesRouter(db));
 app.use('/api/v1/finance',databaseRequired,activeSession,financeRouter(db));
 app.use('/api/v1/scm',databaseRequired,activeSession,scmRouter(db));
+app.use('/api/v1/scm/outbox',databaseRequired,activeSession,scmOutboxRouter(db));
 app.use((_req,res)=>res.status(404).json({error:{code:'NOT_FOUND',message:'Resource not found'},requestId:res.locals.requestId}));app.use(errorMiddleware);
 const server=app.listen(PORT,'0.0.0.0',()=>console.log(`KZ-ERP API listening on 0.0.0.0:${PORT}`));server.keepAliveTimeout=65000;server.headersTimeout=66000;
 async function initializeDatabase(){for(let attempt=1;attempt<=5;attempt+=1){try{await mongo.connect();await ensureCoreCollections(db);await ensureModuleCollections(db);await ensureMasterDataCollections(db);await ensureStockCollections(db);await ensureScmCollections(db);await ensureScmOutboxPublicationCollections(db);databaseReady=true;databaseError='';stopScmOutboxWorker=startScmOutboxWorker(db);console.log('KZ-ERP MongoDB ready; SCM outbox worker started');return;}catch(error){databaseReady=false;databaseError=error instanceof Error?error.message:'Database initialization failed';console.error(`MongoDB initialization attempt ${attempt}/5 failed:`,error);if(attempt<5)await new Promise(resolve=>setTimeout(resolve,3000));}}console.error('KZ-ERP API started without a ready database; health/ready remains 503.');}
