@@ -14,6 +14,7 @@ function headers(binary = false) {
 }
 
 router.get('/latest', async (_req, res) => {
+  if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' });
   try {
     const r = await fetch(`${GH}/repos/${REPO}/releases/latest`, { headers: headers() });
     if (!r.ok) return res.status(r.status).json({ error: 'GITHUB_RELEASE_LOOKUP_FAILED' });
@@ -22,14 +23,27 @@ router.get('/latest', async (_req, res) => {
     const checksum = release.assets?.find((a: any) => a.name === 'SHA256SUMS.txt');
     if (!deb || !checksum) return res.status(404).json({ error: 'RELEASE_ASSETS_INCOMPLETE' });
 
-    const checksumResponse = await fetch(`${GH}/repos/${REPO}/releases/assets/${checksum.id}`, { headers: headers(true), redirect: 'follow' });
+    const checksumResponse = await fetch(`${GH}/repos/${REPO}/releases/assets/${checksum.id}`, {
+      headers: headers(true),
+      redirect: 'follow'
+    });
     if (!checksumResponse.ok) return res.status(502).json({ error: 'CHECKSUM_LOOKUP_FAILED' });
     const checksumText = await checksumResponse.text();
-    const line = checksumText.split(/\r?\n/).find((value: string) => value.trim().endsWith(`  ${deb.name}`) || value.trim().endsWith(` *${deb.name}`));
+    const line = checksumText.split(/\r?\n/).find((value: string) =>
+      value.trim().endsWith(`  ${deb.name}`) || value.trim().endsWith(` *${deb.name}`)
+    );
     const sha256 = line?.trim().split(/\s+/)[0];
     if (!sha256 || !/^[a-f0-9]{64}$/i.test(sha256)) return res.status(502).json({ error: 'CHECKSUM_NOT_FOUND' });
 
-    res.json({ version: release.tag_name.replace(/^v/, ''), tag: release.tag_name, name: release.name, notes: release.body ?? '', assetId: deb.id, assetName: deb.name, sha256 });
+    res.json({
+      version: release.tag_name.replace(/^v/, ''),
+      tag: release.tag_name,
+      name: release.name,
+      notes: release.body ?? '',
+      assetId: deb.id,
+      assetName: deb.name,
+      sha256
+    });
   } catch (error) {
     console.error(error);
     res.status(502).json({ error: 'GITHUB_UNAVAILABLE' });
@@ -37,16 +51,24 @@ router.get('/latest', async (_req, res) => {
 });
 
 router.get('/asset/:assetId', async (req, res) => {
+  if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' });
   const assetId = Number(req.params.assetId);
   if (!Number.isSafeInteger(assetId) || assetId <= 0) return res.status(400).json({ error: 'INVALID_ASSET_ID' });
   try {
-    const r = await fetch(`${GH}/repos/${REPO}/releases/assets/${assetId}`, { headers: headers(true), redirect: 'follow' });
+    const r = await fetch(`${GH}/repos/${REPO}/releases/assets/${assetId}`, {
+      headers: headers(true),
+      redirect: 'follow'
+    });
     if (!r.ok || !r.body) return res.status(r.status || 502).json({ error: 'ASSET_DOWNLOAD_FAILED' });
     res.setHeader('Content-Type', 'application/vnd.debian.binary-package');
-    const length = r.headers.get('content-length'); if (length) res.setHeader('Content-Length', length);
+    const length = r.headers.get('content-length');
+    if (length) res.setHeader('Content-Length', length);
     for await (const chunk of r.body as any) res.write(Buffer.from(chunk));
     res.end();
-  } catch (error) { console.error(error); res.destroy(); }
+  } catch (error) {
+    console.error(error);
+    res.destroy();
+  }
 });
 
 export default router;
