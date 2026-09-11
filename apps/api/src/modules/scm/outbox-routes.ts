@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Db } from 'mongodb';
+import type { Db, Filter } from 'mongodb';
 import { Router } from 'express';
 import { z } from 'zod';
 import { fail, ok, paginated, parsePagination } from '../../core/api.js';
@@ -32,7 +32,7 @@ export function scmOutboxRouter(db: Db): Router {
       if (!can(res, 'scm:read')) { fail(res, 403, 'FORBIDDEN'); return; }
       const a = actor(res);
       const p = parsePagination(req.query);
-      const filter: Record<string, unknown> = {};
+      const filter: Filter<ScmOutboxEvent> = {};
       if (typeof req.query.status === 'string') filter.status = status.parse(req.query.status);
       if (typeof req.query.type === 'string') filter.type = req.query.type;
       if (typeof req.query.aggregateType === 'string') filter.aggregateType = req.query.aggregateType;
@@ -55,11 +55,11 @@ export function scmOutboxRouter(db: Db): Router {
     } catch (e) { next(e); }
   });
 
-  router.post('/:id/replay', async (req, res, next) => {
+  router.post('/:id/replay', async (_req, res, next) => {
     try {
       if (!can(res, 'scm:write')) { fail(res, 403, 'FORBIDDEN'); return; }
       const a = actor(res);
-      const id = eventId.parse(req.params.id);
+      const id = eventId.parse(_req.params.id);
       const event = await events.findOne(a.companyId, { _id: id });
       if (!event) { fail(res, 404, 'NOT_FOUND', 'SCM outbox event not found'); return; }
       if (event.status !== 'dead_letter') { fail(res, 409, 'CONFLICT', 'Only dead-letter events can be replayed'); return; }
