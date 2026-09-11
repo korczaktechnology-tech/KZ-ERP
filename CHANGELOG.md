@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — F5 Finance hardening
+
+- Added the first operational finance module for accounts receivable and payable.
+- Added real financial entry creation, editing, payment and cancellation flows.
+- Added exact cent-based aggregation on top of MongoDB `Decimal128` values to avoid binary floating-point totals.
+- Added tenant isolation, RBAC, UUID idempotency and audit coverage for finance operations.
+- Added the desktop Finance interface and F5 acceptance/runbook documentation.
+
 ## 0.1.3
 
 - Fixed the custom titlebar controls so minimize, maximize/restore and close are outside the draggable region and explicitly marked non-draggable.
