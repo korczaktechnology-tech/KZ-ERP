@@ -4,9 +4,9 @@ export type AuthUser = { id: string; companyId: string; email: string; role: Rol
 export type TenantContext = { user: AuthUser; companyId: string };
 export const ROLE_PERMISSIONS: Record<Role, string[]> = {
   owner: ['*'],
-  admin: ['company:read','company:write','users:read','users:write','audit:read','master-data:read','master-data:write','stock:read','stock:write','sales:read','sales:write','finance:read','finance:write','scm:read','scm:write'],
-  manager: ['company:read','users:read','audit:read','master-data:read','master-data:write','stock:read','stock:write','sales:read','sales:write','finance:read','finance:write','scm:read','scm:write'],
-  user: ['company:read','master-data:read','stock:read','sales:read','finance:read','scm:read'],
-  viewer: ['company:read','master-data:read','stock:read','sales:read','finance:read','scm:read']
+  admin: ['company:read','company:write','users:read','users:write','audit:read','master-data:read','master-data:write','stock:read','stock:write','sales:read','sales:write','finance:read','finance:write','scm:read','scm:write','logistics:read','logistics:write'],
+  manager: ['company:read','users:read','audit:read','master-data:read','master-data:write','stock:read','stock:write','sales:read','sales:write','finance:read','finance:write','scm:read','scm:write','logistics:read','logistics:write'],
+  user: ['company:read','master-data:read','stock:read','sales:read','finance:read','scm:read','logistics:read'],
+  viewer: ['company:read','master-data:read','stock:read','sales:read','finance:read','scm:read','logistics:read']
 };
 export function hasPermission(role: Role, permission: string): boolean { const permissions = ROLE_PERMISSIONS[role]; return permissions.includes('*') || permissions.includes(permission); }
