@@ -1,8 +1,10 @@
-# F5 — Financeiro
+# F6 — Financeiro (arquivo legado `f5-checklist.md`)
+
+> Este arquivo mantém o nome histórico para não quebrar referências existentes. Na arquitetura 1.0, Financeiro é a fase **F6** e SCM/Compras é a fase **F5**. O checklist oficial de SCM está em `docs/f5-scm-checklist.md`.
 
 ## Escopo
 
-F5 entrega o primeiro núcleo financeiro do KORCZAK ERP: contas a receber e a pagar, com lançamento, consulta, edição controlada, baixa, cancelamento, vencimento, resumo operacional, tenant isolation, RBAC, idempotência e auditoria.
+F6 entrega o primeiro núcleo financeiro do KORCZAK ERP: contas a receber e a pagar, com lançamento, consulta, edição controlada, baixa, cancelamento, vencimento, resumo operacional, tenant isolation, RBAC, idempotência e auditoria.
 
 ## Entregas
 
