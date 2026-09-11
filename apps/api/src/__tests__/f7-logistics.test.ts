@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasPermission, ROLE_PERMISSIONS } from '../../core/types.js';
+import { hasPermission, ROLE_PERMISSIONS } from '../core/types.js';
 
 test('F7 logistics RBAC exposes read/write permissions to operational roles', () => {
   assert.equal(hasPermission('owner', 'logistics:read'), true);
