@@ -14,7 +14,7 @@ import { enqueueFinanceEvent } from './outbox.js';
 const id=z.string().uuid(); const idem=z.string().uuid();
 const money=z.string().trim().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/).refine(v=>v!=='0','amount must be greater than zero');
 const date=z.string().datetime({offset:true});
-const accountOpening=z.string().trim().regex(/^-?\d+(?:\.\d{1,2})?$/).refine(v=>v!=='0','openingBalance must be non-zero');
+const accountOpening=z.string().trim().regex(/^-?\d+(?:\.\d{1,2})?$/);
 const accountSchema=z.object({code:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),type:z.enum(['cash','bank','wallet','credit_card']),currency:z.string().trim().regex(/^[A-Z]{3}$/),openingBalance:accountOpening.default('0')});
 const categorySchema=z.object({code:z.string().trim().min(1).max(40),name:z.string().trim().min(1).max(120),direction:z.enum(['income','expense'])});
 const paymentSchema=z.object({entryId:id,accountId:id,amount:money,paidAt:date,method:z.enum(['cash','bank_transfer','pix','card','other']),reference:z.string().trim().max(120).optional()});
