@@ -79,6 +79,12 @@ jobs:
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/icon.svg
 
+      - name: Clean previous Debian bundles
+        run: |
+          set -euo pipefail
+          rm -rf apps/desktop/src-tauri/target/release/bundle/deb
+          mkdir -p apps/desktop/src-tauri/target/release/bundle/deb
+
       - name: Build Linux .deb
         working-directory: apps/desktop
         env:
