@@ -1,4 +1,4 @@
-import type { Document } from 'mongodb';
+import type { Document, Decimal128 } from 'mongodb';
 
 export type Id = string;
 
@@ -45,9 +45,9 @@ export type Warehouse = BaseDocument & {
 export type StockBalance = BaseDocument & {
   warehouseId: Id;
   productId: Id;
-  quantity: number;
-  reservedQuantity: number;
-  minimumQuantity: number;
+  quantity: Decimal128;
+  reservedQuantity: Decimal128;
+  minimumQuantity: Decimal128;
 };
 
 export type DocumentLine = {
