@@ -26,11 +26,17 @@ Todas as rotas exigem autenticação, tenant ativo e RBAC.
 - Preço: string decimal com até 2 casas.
 - Linhas, subtotal e total são persistidos como BSON `Decimal128`.
 - Total de linha é arredondado deterministicamente para centavos.
+- Não há conversão monetária por `Number`/ponto flutuante.
 
 ## Integridade
 
 - Cliente e produtos precisam pertencer ao tenant autenticado e estar ativos.
 - Número do pedido é único por tenant através do índice de `sales_orders`.
 - `Idempotency-Key` é vinculada ao hash da operação: repetição idêntica é segura; reutilização com payload diferente retorna conflito.
-- Toda mutação gera evento de auditoria.
+- Criação, edição e transições de estado executam a mutação e o respectivo evento de auditoria na mesma transação MongoDB.
 - Transições inválidas retornam `409`.
+- O commit da operação só ocorre quando todos os efeitos persistentes da operação são confirmados.
+
+## Estoque
+
+F4 confirma o ciclo comercial do pedido, mas não realiza automaticamente baixa ou reserva de estoque. O estoque é responsabilidade do F3 até que um contrato de integração comercial/estoque seja formalmente ativado.
