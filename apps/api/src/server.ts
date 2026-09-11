@@ -22,8 +22,17 @@ if (!MONGODB_URI) throw new Error('MONGODB_URI is required');
 if (!AUTH_SECRET || AUTH_SECRET.length < 32) throw new Error('AUTH_SECRET must be set and contain at least 32 characters');
 if (!CORE_BOOTSTRAP_KEY || CORE_BOOTSTRAP_KEY.length < 32) throw new Error('CORE_BOOTSTRAP_KEY must be set and contain at least 32 characters');
 if (!CORS_ORIGIN) throw new Error('CORS_ORIGIN is required');
-const corsOrigins = CORS_ORIGIN.split(',').map(v => v.trim()).filter(Boolean);
-if (corsOrigins.length === 0 || corsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
+const configuredCorsOrigins = CORS_ORIGIN.split(',').map(v => v.trim()).filter(Boolean);
+if (configuredCorsOrigins.length === 0 || configuredCorsOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain one or more explicit origins');
+
+// Tauri production webviews use a tauri.localhost origin. Keep the configured
+// browser origins strict, but always allow the first-party desktop shell.
+const desktopOrigins = new Set([
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'http://localhost:1420',
+]);
+const corsOrigins = new Set([...configuredCorsOrigins, ...desktopOrigins]);
 
 const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 5000 });
 await mongo.connect();
@@ -35,7 +44,12 @@ await ensureMasterDataCollections(db);
 const app = express();
 app.disable('x-powered-by');
 app.use(requestId);
-app.use(cors({ origin: corsOrigins }));
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || corsOrigins.has(origin)) return callback(null, true);
+    return callback(new Error('CORS origin not allowed'));
+  },
+}));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/health/live', (_req, res) => {
