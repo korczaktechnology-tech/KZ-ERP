@@ -1,0 +1,35 @@
+name: Restore F2 component
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    if: github.sha == '4ed2d3b78e1a75bb64c5f57cdd5dddebc35d408b'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Restore F2 component from known-good commit
+        run: |
+          set -euo pipefail
+          git checkout 16cc9680798af18a715fae9408bdceaaf0e6c0d9 -- apps/desktop/src/F2MasterData.tsx
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('apps/desktop/src/F2MasterData.tsx')
+          s = p.read_text()
+          if "import './F2MasterData.css';" not in s:
+              s = s.replace("import React from 'react';", "import React from 'react';\nimport './F2MasterData.css';", 1)
+              p.write_text(s)
+          PY
+          rm -f .github/workflows/restore-f2-file.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/desktop/src/F2MasterData.tsx .github/workflows/restore-f2-file.yml
+          git commit -m 'fix(desktop): restore F2 master data component'
+          git push origin main
