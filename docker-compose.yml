@@ -2,22 +2,30 @@ services:
   mongo:
     image: mongo:8
     restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all"]
     ports:
       - "27017:27017"
     volumes:
       - kz-erp-mongo:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"try { if (rs.status().ok === 1) print('1'); else print('0') } catch (e) { try { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}); print('1') } catch (initError) { print('0') } }\" | grep -q '^1$'"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 5s
 
   api:
     build:
       context: ./apps/api
     restart: unless-stopped
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     ports:
       - "10000:10000"
     environment:
       PORT: 10000
-      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_URI: mongodb://mongo:27017/ERP?replicaSet=rs0
       MONGODB_DB: ERP
       CORS_ORIGIN: http://localhost:1420
       APP_VERSION: 0.1.3
