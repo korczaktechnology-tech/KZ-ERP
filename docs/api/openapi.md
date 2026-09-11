@@ -105,14 +105,22 @@ All F5 routes require an authenticated active tenant. Read operations require `s
 
 Receiving is transactional: the receipt, purchase-order received quantities/status, stock balance increase, stock movement and audit/outbox records are committed together. A receipt cannot exceed the ordered quantity, and concurrent order changes are rejected rather than silently overwriting state.
 
+### Outbox operations
+
+- `GET /api/v1/scm/outbox` — paginated tenant-scoped operational view; filters `status`, `type` and `aggregateType`.
+- `POST /api/v1/scm/outbox/:id/replay` — requeues a `dead_letter` event, resets its retry counter and records an audit entry.
+
+Outbox read requires `scm:read`; replay requires `scm:write`.
+
 ### F5 invariants
 
 - Supplier, product and warehouse references are tenant-scoped and active when required.
 - Purchase request, quotation and order state transitions are explicit and invalid transitions return HTTP 409.
 - Decimal quantities support up to 6 fractional places; money supports up to 2.
 - UUID idempotency keys are persisted with operation hashes; reusing a key with a different payload returns HTTP 409.
-- Audit records are written for every SCM mutation.
+- Audit records are written for every SCM mutation and outbox replay.
 - Critical SCM business changes create pending outbox events in `scm_outbox_events` for asynchronous publication.
+- Published events are idempotent by `sourceEventId` and carry a versioned envelope (`schemaVersion`, `correlationId`).
 - Tenant-owned persistence binds `companyId` to the authenticated context.
 
 ## F6 Finance
