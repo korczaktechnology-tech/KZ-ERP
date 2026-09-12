@@ -1,0 +1,78 @@
+name: Fix updater watchdog
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch updater watchdog and secure temp files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/desktop/src-tauri/src/lib.rs')
+          s = p.read_text()
+          s = s.replace(
+              'use std::{fs, path::{Path, PathBuf}, process::{Command, Stdio}, time::Duration};',
+              'use std::{fs, fs::OpenOptions, path::{Path, PathBuf}, process::{Command, Stdio}, time::{Duration, SystemTime, UNIX_EPOCH}};'
+          )
+          old = 'struct TempFile { path: PathBuf }\nimpl TempFile { fn new(path: PathBuf) -> Self { Self { path } } fn path(&self) -> &Path { &self.path } fn keep(self) -> PathBuf { let path = self.path.clone(); std::mem::forget(self); path } }'
+          new = '''struct TempFile { path: PathBuf }\nimpl TempFile {\n    fn new_unique(prefix: &str, suffix: &str) -> Result<Self, String> {\n        let dir = std::env::temp_dir();\n        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "clock error".to_string())?.as_nanos();\n        for attempt in 0..32_u32 {\n            let path = dir.join(format!("{prefix}-{}-{seed}-{attempt}{suffix}", std::process::id()));\n            match OpenOptions::new().write(true).create_new(true).open(&path) {\n                Ok(_) => return Ok(Self { path }),\n                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,\n                Err(error) => return Err(format!("create secure temporary file: {error}")),\n            }\n        }\n        Err("unable to create unique temporary file".into())\n    }\n    fn path(&self) -> &Path { &self.path }\n    fn keep(self) -> PathBuf { let path = self.path.clone(); std::mem::forget(self); path }\n}'''
+          if old not in s: raise SystemExit('TempFile block not found')
+          s = s.replace(old, new, 1)
+          s = s.replace(
+              'let temp = TempFile::new(std::env::temp_dir().join(format!("kz-erp-{version}-{}-update.deb", std::process::id())));',
+              'let temp = TempFile::new_unique("kz-erp-update", ".deb")?;'
+          )
+          s = s.replace(
+              'let backup = TempFile::new(std::env::temp_dir().join(format!("kz-erp-{current_version}-{}-rollback.deb", std::process::id())));',
+              'let backup = TempFile::new_unique("kz-erp-rollback", ".deb")?;'
+          )
+          old_watchdog = 'pub fn run_update_watchdog(marker_file: &str) { let path = PathBuf::from(marker_file); std::thread::sleep(WATCHDOG_DELAY); if !path.exists() { return; } let pending: UpdateMarker = match fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(value) => value, None => return }; let backup = PathBuf::from(&pending.backup_path); if !backup.is_file() { return; } if let Some(pkexec) = find_pkexec() { let _ = Command::new(pkexec).arg("/usr/bin/dpkg").args(["--install", "--force-downgrade", backup.to_string_lossy().as_ref()]).status(); } let _ = fs::remove_file(&path); let _ = fs::remove_file(backup); }'
+          new_watchdog = '''pub fn run_update_watchdog(marker_file: &str) {\n    let path = PathBuf::from(marker_file);\n    std::thread::sleep(WATCHDOG_DELAY);\n    if !path.exists() { return; }\n    let pending: UpdateMarker = match fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(value) => value, None => return };\n    let backup = PathBuf::from(&pending.backup_path);\n    if !backup.is_file() { return; }\n    let Some(pkexec) = find_pkexec() else { return; };\n    let status = Command::new(pkexec).arg("/usr/bin/dpkg").args(["--install", "--force-downgrade", backup.to_string_lossy().as_ref()]).status();\n    if status.map(|value| value.success()).unwrap_or(false) {\n        let _ = fs::remove_file(&path);\n        let _ = fs::remove_file(&backup);\n        if let Ok(exe) = std::env::current_exe() { let _ = Command::new(exe).spawn(); }\n    }\n}'''
+          if old_watchdog not in s: raise SystemExit('watchdog block not found')
+          s = s.replace(old_watchdog, new_watchdog, 1)
+          old_run = '#[cfg_attr(mobile, tauri::mobile_entry_point)]\npub fn run() { tauri::Builder::default().invoke_handler(tauri::generate_handler![install_update, confirm_update]).run(tauri::generate_context!()).expect("error while running KORCZAK ERP"); }'
+          new_run = '''#[cfg_attr(mobile, tauri::mobile_entry_point)]\npub fn run() {\n    let args: Vec<String> = std::env::args().collect();\n    if let Some(index) = args.iter().position(|arg| arg == "--kz-update-watchdog") {\n        if let Some(marker) = args.get(index + 1) {\n            run_update_watchdog(marker);\n            return;\n        }\n    }\n    tauri::Builder::default().invoke_handler(tauri::generate_handler![install_update, confirm_update]).run(tauri::generate_context!()).expect("error while running KORCZAK ERP");\n}'''
+          if old_run not in s: raise SystemExit('run block not found')
+          s = s.replace(old_run, new_run, 1)
+          old_fail = 'let _ = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(format!("restart application failed with {status}"));'
+          new_fail = 'let rollback = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); if rollback.as_ref().map(|value| value.status.success()).unwrap_or(false) { let _ = Command::new(&exe).spawn(); } return Err(format!("restart application failed with {status}"));'
+          if old_fail not in s: raise SystemExit('restart failure block not found')
+          s = s.replace(old_fail, new_fail, 1)
+          p.write_text(s)
+          PY
+          git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package.json
+      - name: Install Linux dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - name: Install frontend dependencies and generate icons
+        working-directory: apps/desktop
+        run: npm install --no-audit --no-fund --prefer-offline && npm run tauri icon src-tauri/icons/icon.svg
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile updater
+        working-directory: apps/desktop/src-tauri
+        run: cargo check
+      - name: Commit and remove temporary workflow
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/fix-watchdog.yml
+          git add apps/desktop/src-tauri/src/lib.rs
+          git commit -m 'fix(updater): make watchdog executable and rollback recoverable'
+          git push
