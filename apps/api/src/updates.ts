@@ -9,7 +9,6 @@ const REQUEST_TIMEOUT_MS = 120_000;
 
 type ReleaseAsset = { id?: number; name?: string; digest?: string; size?: number };
 type Release = { tag_name?: string; name?: string; body?: string; published_at?: string; assets?: ReleaseAsset[] };
-
 function headers(binary = false) { return { Accept: binary ? 'application/octet-stream' : 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10', 'User-Agent': 'KORCZAK-ERP-Updater/2.0', ...(token ? { Authorization: `Bearer ${token}` } : {}) }; }
 function validSha256(value: unknown): value is string { return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value); }
 function validSignature(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(value) && value.length >= 80 && value.length <= 256; }
@@ -23,16 +22,10 @@ async function githubFetch(input: string, init: RequestInit = {}) { const contro
 async function latestRelease() { const response = await githubFetch(`${GH}/repos/${REPO}/releases/latest`, { headers: headers() }); if (!response.ok) throw new Error(`GITHUB_RELEASE_LOOKUP_FAILED:${response.status}`); return await response.json() as Release; }
 async function releaseByVersion(target: string) { if (!/^\d+\.\d+\.\d+$/.test(target)) return null; const response = await githubFetch(`${GH}/repos/${REPO}/releases/tags/v${target}`, { headers: headers() }); if (!response.ok) return null; return await response.json() as Release; }
 async function checksumFromAsset(release: Release, deb: ReleaseAsset) {
-  const digest = typeof deb.digest === 'string' && deb.digest.toLowerCase().startsWith('sha256:') ? deb.digest.slice(7).toLowerCase() : '';
-  if (validSha256(digest)) return digest;
-  const checksum = release.assets?.find(asset => asset.name === 'SHA256SUMS.txt' && typeof asset.id === 'number');
-  if (!checksum?.id) return '';
-  const response = await githubFetch(`${GH}/repos/${REPO}/releases/assets/${checksum.id}`, { headers: headers(true), redirect: 'follow' });
-  if (!response.ok) return '';
-  const text = await response.text();
-  const line = text.split(/\r?\n/).find(value => value.trim().endsWith(`  ${deb.name}`) || value.trim().endsWith(` *${deb.name}`));
-  const candidate = line?.trim().split(/\s+/)[0] ?? '';
-  return validSha256(candidate) ? candidate.toLowerCase() : '';
+  const digest = typeof deb.digest === 'string' && deb.digest.toLowerCase().startsWith('sha256:') ? deb.digest.slice(7).toLowerCase() : ''; if (validSha256(digest)) return digest;
+  const checksum = release.assets?.find(asset => asset.name === 'SHA256SUMS.txt' && typeof asset.id === 'number'); if (!checksum?.id) return '';
+  const response = await githubFetch(`${GH}/repos/${REPO}/releases/assets/${checksum.id}`, { headers: headers(true), redirect: 'follow' }); if (!response.ok) return '';
+  const text = await response.text(); const line = text.split(/\r?\n/).find(value => value.trim().endsWith(`  ${deb.name}`) || value.trim().endsWith(` *${deb.name}`)); const candidate = line?.trim().split(/\s+/)[0] ?? ''; return validSha256(candidate) ? candidate.toLowerCase() : '';
 }
 async function signedManifest(release: Release) {
   const deb = debAsset(release); const sig = signatureAsset(release); if (!deb?.id || !deb.name || !sig?.id) throw new Error('UPDATE_SIGNATURE_NOT_FOUND');
@@ -55,17 +48,20 @@ router.get('/previous', async (req, res) => {
     const response = await githubFetch(`${GH}/repos/${REPO}/releases?per_page=100`, { headers: headers() }); if (!response.ok) return res.status(502).json({ error: 'GITHUB_RELEASE_LOOKUP_FAILED' });
     const releases = await response.json() as Release[]; const candidates = releases.map(release => ({ release, version: version(release.tag_name) })).filter(item => item.version && compareVersion(item.version, current) < 0).sort((a, b) => compareVersion(b.version!, a.version!)); const selected = candidates[0]?.release; if (!selected) return res.status(404).json({ error: 'PREVIOUS_RELEASE_NOT_FOUND' });
     const deb = debAsset(selected); if (!deb?.id || !deb.name) return res.status(404).json({ error: 'PREVIOUS_RELEASE_ASSET_NOT_FOUND' }); const sha256 = await checksumFromAsset(selected, deb); if (!validSha256(sha256)) return res.status(502).json({ error: 'PREVIOUS_RELEASE_DIGEST_NOT_FOUND' });
-    let signature: string | undefined; try { const manifest = await signedManifest(selected); signature = manifest.signature; } catch { signature = undefined; }
+    let signature: string | undefined; try { signature = (await signedManifest(selected)).signature; } catch { signature = undefined; }
     res.json({ version: version(selected.tag_name), assetId: deb.id, assetName: deb.name, sha256, ...(signature ? { signature } : {}) });
   } catch (error) { console.error(error); res.status(502).json({ error: 'PREVIOUS_RELEASE_LOOKUP_FAILED' }); }
 });
 
 router.get('/asset/:assetId', async (req, res) => {
-  if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' }); const assetId = validAssetId(req.params.assetId); const requestedVersion = typeof req.query.version === 'string' ? version(req.query.version) : null; const requestedSha = typeof req.query.sha256 === 'string' ? req.query.sha256.toLowerCase() : '';
+  if (!token) return res.status(503).json({ error: 'UPDATE_SERVICE_NOT_CONFIGURED' }); const assetId = validAssetId(req.params.assetId); const requestedVersion = typeof req.query.version === 'string' ? version(req.query.version) : null; const requestedSha = typeof req.query.sha256 === 'string' ? req.query.sha256.toLowerCase() : ''; const allowLegacyRollback = req.query.allowUnsigned === '1';
   if (assetId === null) return res.status(400).json({ error: 'INVALID_ASSET_ID' }); if (!requestedVersion || !validSha256(requestedSha)) return res.status(400).json({ error: 'INVALID_ASSET_BINDING' });
   try {
-    const release = await releaseByVersion(requestedVersion); if (!release) return res.status(404).json({ error: 'RELEASE_NOT_FOUND' }); const manifest = await signedManifest(release); if (manifest.assetId !== assetId || manifest.sha256 !== requestedSha) return res.status(409).json({ error: 'ASSET_BINDING_MISMATCH' });
-    const deb = debAsset(release); if (!deb?.size || deb.size > MAX_ASSET_BYTES) return res.status(413).json({ error: 'ASSET_TOO_LARGE' }); const r = await githubFetch(`${GH}/repos/${REPO}/releases/assets/${assetId}`, { headers: headers(true), redirect: 'follow' }); if (!r.ok || !r.body) return res.status(r.status || 502).json({ error: 'ASSET_DOWNLOAD_FAILED' });
+    const release = await releaseByVersion(requestedVersion); if (!release) return res.status(404).json({ error: 'RELEASE_NOT_FOUND' }); const deb = debAsset(release); if (!deb?.id || deb.id !== assetId) return res.status(404).json({ error: 'RELEASE_ASSET_NOT_FOUND' });
+    if (allowLegacyRollback) { const sha = await checksumFromAsset(release, deb); if (!sha || sha !== requestedSha) return res.status(409).json({ error: 'ASSET_CHECKSUM_MISMATCH' }); }
+    else { const manifest = await signedManifest(release); if (manifest.assetId !== assetId || manifest.sha256 !== requestedSha) return res.status(409).json({ error: 'ASSET_BINDING_MISMATCH' }); }
+    if (!deb.size || deb.size > MAX_ASSET_BYTES) return res.status(413).json({ error: 'ASSET_TOO_LARGE' });
+    const r = await githubFetch(`${GH}/repos/${REPO}/releases/assets/${assetId}`, { headers: headers(true), redirect: 'follow' }); if (!r.ok || !r.body) return res.status(r.status || 502).json({ error: 'ASSET_DOWNLOAD_FAILED' });
     const length = Number(r.headers.get('content-length') ?? deb.size); if (!Number.isFinite(length) || length <= 0 || length > MAX_ASSET_BYTES) return res.status(413).json({ error: 'ASSET_TOO_LARGE' }); res.setHeader('Content-Type', 'application/vnd.debian.binary-package'); res.setHeader('Content-Length', String(length)); for await (const chunk of r.body as any) res.write(Buffer.from(chunk)); res.end();
   } catch (error) { console.error(error); if (!res.headersSent) res.status(502).json({ error: 'ASSET_DOWNLOAD_FAILED' }); else res.destroy(); }
 });
