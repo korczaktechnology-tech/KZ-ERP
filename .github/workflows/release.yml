@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'SemVer version to build (for example 0.1.3)'
+        description: 'SemVer version to build (for example 0.1.410)'
         required: false
         default: ''
         type: string
@@ -46,16 +46,18 @@ jobs:
 
       - name: Install Linux dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils openssl
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils openssl jq dpkg-dev
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm install --no-audit --no-fund --prefer-offline
 
-      - name: Determine release version
+      - name: Determine and validate release version
         env:
           DISPATCH_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           if [ -n "$DISPATCH_VERSION" ]; then
@@ -78,9 +80,31 @@ jobs:
             fi
             VERSION="$MAJOR.$MINOR.$COMMIT_NUMBER"
           fi
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "ERRO: versão inválida: $VERSION"; exit 1; fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERRO: versão inválida: $VERSION"
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "ERRO: Release $TAG já existe."
+            exit 1
+          fi
+
+          LATEST="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' 2>/dev/null || true)"
+          if [ -n "$LATEST" ]; then
+            LATEST_VERSION="${LATEST#v}"
+            if [[ "$LATEST_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              if ! node -e 'const a=process.argv[1].split(".").map(Number),b=process.argv[2].split(".").map(Number);let c=0;for(let i=0;i<3;i++){if(a[i]!==b[i]){c=a[i]>b[i]?1:-1;break}}if(c<=0)process.exit(1)' "$VERSION" "$LATEST_VERSION"; then
+                echo "ERRO: $VERSION não é superior à última release $LATEST_VERSION."
+                exit 1
+              fi
+            fi
+          fi
+
           echo "BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Release desta execução: v$VERSION"
+          echo "Release desta execução: $TAG"
 
       - name: Set package version
         working-directory: apps/desktop
@@ -122,6 +146,7 @@ jobs:
           VITE_APP_VERSION: ${{ env.BUILD_VERSION }}
           VITE_API_URL: https://kz-erp.onrender.com
           VITE_UPDATE_API_URL: https://kz-erp.onrender.com
+          VITE_UPDATE_PUBLIC_KEY_B64: ${{ env.UPDATE_PUBLIC_KEY_B64 }}
         run: npm run tauri build -- --bundles deb
 
       - name: Verify Debian package
@@ -133,6 +158,11 @@ jobs:
           file "${packages[0]}"
           dpkg-deb --info "${packages[0]}"
           dpkg-deb --contents "${packages[0]}" >/dev/null
+          PACKAGE_VERSION="$(dpkg-deb -f "${packages[0]}" Version)"
+          if [ "$PACKAGE_VERSION" != "$BUILD_VERSION" ]; then
+            echo "ERRO: versão do .deb ($PACKAGE_VERSION) difere de $BUILD_VERSION"
+            exit 1
+          fi
 
       - name: Prepare release files
         run: |
@@ -152,17 +182,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish GitHub Release
+      - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="v${BUILD_VERSION}"
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "ERRO: Release $TAG já existe. Isso indica colisão de versão."
-            exit 1
-          fi
-          gh release create "$TAG" release-artifact/KORCZAK-ERP-linux-amd64.deb release-artifact/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "KORCZAK ERP $TAG" --notes "Release oficial do KORCZAK ERP para Linux. Criado automaticamente a partir do push $GITHUB_SHA."
+          gh release create "$TAG" release-artifact/KORCZAK-ERP-linux-amd64.deb release-artifact/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "KORCZAK ERP $TAG" --notes "Release oficial do KORCZAK ERP para Linux. Criado automaticamente a partir do push $GITHUB_SHA." --draft
 
       - name: Create signed update manifest
         env:
@@ -170,7 +196,9 @@ jobs:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          ASSET_ID="$(gh release view "v${BUILD_VERSION}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="KORCZAK-ERP-linux-amd64.deb") | .id')"
+          TAG="v${BUILD_VERSION}"
+          ASSET_ID="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="KORCZAK-ERP-linux-amd64.deb") | .id')"
+          if [[ ! "$ASSET_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: assetId inválido: $ASSET_ID"; exit 1; fi
           SHA256="$(cut -d' ' -f1 release-artifact/SHA256SUMS.txt)"
           printf '%s\n' "${BUILD_VERSION}" "${ASSET_ID}" "${SHA256}" "KORCZAK-ERP-linux-amd64.deb" > release-artifact/update-signing-payload.txt
           printf '%s' "$UPDATE_SIGNING_PRIVATE_KEY" > /tmp/kz-update-signing-key.pem
@@ -178,4 +206,54 @@ jobs:
           SIGNATURE="$(base64 -w0 release-artifact/signature.bin)"
           printf '{"version":"%s","assetId":%s,"assetName":"%s","sha256":"%s","signature":"%s"}\n' "${BUILD_VERSION}" "${ASSET_ID}" "KORCZAK-ERP-linux-amd64.deb" "${SHA256}" "${SIGNATURE}" > release-artifact/UPDATE-MANIFEST.json
           rm -f /tmp/kz-update-signing-key.pem release-artifact/update-signing-payload.txt release-artifact/signature.bin
-          gh release upload "v${BUILD_VERSION}" release-artifact/UPDATE-MANIFEST.json --repo "$GITHUB_REPOSITORY" --clobber
+          jq -e --arg version "$BUILD_VERSION" --arg sha "$SHA256" '.version==$version and .assetName=="KORCZAK-ERP-linux-amd64.deb" and .sha256==$sha and (.assetId|type)=="number" and (.signature|type)=="string" and (.signature|length)>0' release-artifact/UPDATE-MANIFEST.json >/dev/null
+          gh release upload "$TAG" release-artifact/UPDATE-MANIFEST.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Validate draft release before publishing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${BUILD_VERSION}"
+          ASSETS="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets --jq '[.isDraft, ([.assets[].name] | sort | join("|"))] | @tsv')"
+          IS_DRAFT="$(printf '%s' "$ASSETS" | cut -f1)"
+          NAMES="$(printf '%s' "$ASSETS" | cut -f2)"
+          if [ "$IS_DRAFT" != "true" ]; then echo "ERRO: release deveria continuar como draft nesta etapa."; exit 1; fi
+          EXPECTED="KORCZAK-ERP-linux-amd64.deb|SHA256SUMS.txt|UPDATE-MANIFEST.json"
+          if [ "$NAMES" != "$EXPECTED" ]; then echo "ERRO: assets da release incompletos: $NAMES"; exit 1; fi
+
+      - name: Publish signed GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="v${BUILD_VERSION}"
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: End-to-end release/update smoke test
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_API_URL: https://kz-erp.onrender.com
+        run: |
+          set -euo pipefail
+          TAG="v${BUILD_VERSION}"
+          RELEASE_JSON="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets,tagName)")
+          echo "$RELEASE_JSON" | jq -e --arg tag "$TAG" '.isDraft==false and .tagName==$tag and ([.assets[].name] | sort) == ["KORCZAK-ERP-linux-amd64.deb","SHA256SUMS.txt","UPDATE-MANIFEST.json"]' >/dev/null
+
+          MANIFEST_URL="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="UPDATE-MANIFEST.json") | .url')"
+          curl --fail --silent --show-error --location --max-time 30 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$MANIFEST_URL" -o /tmp/update-manifest.json
+          jq -e --arg version "$BUILD_VERSION" '.version==$version and .assetName=="KORCZAK-ERP-linux-amd64.deb" and (.assetId|type)=="number" and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|type)=="string" and (.signature|length)>0' /tmp/update-manifest.json >/dev/null
+
+          HTTP_CODE="$(curl --silent --show-error --output /tmp/latest.json --write-out '%{http_code}' --max-time 30 "$UPDATE_API_URL/api/v1/updates/latest")"
+          if [ "$HTTP_CODE" != "200" ]; then echo "ERRO: endpoint /updates/latest retornou HTTP $HTTP_CODE"; cat /tmp/latest.json; exit 1; fi
+          jq -e --arg version "$BUILD_VERSION" '.version==$version and .assetName=="KORCZAK-ERP-linux-amd64.deb" and (.assetId|type)=="number" and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|type)=="string" and (.signature|length)>0' /tmp/latest.json >/dev/null
+
+          ASSET_URL="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="KORCZAK-ERP-linux-amd64.deb") | .url')"
+          curl --fail --silent --show-error --location --max-time 180 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$ASSET_URL" -o /tmp/KORCZAK-ERP-linux-amd64.deb
+          EXPECTED_SHA="$(jq -r '.sha256' /tmp/update-manifest.json)"
+          ACTUAL_SHA="$(sha256sum /tmp/KORCZAK-ERP-linux-amd64.deb | cut -d' ' -f1)"
+          if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then echo "ERRO: SHA256 do .deb não corresponde ao manifesto."; exit 1; fi
+
+          PACKAGE_VERSION="$(dpkg-deb -f /tmp/KORCZAK-ERP-linux-amd64.deb Version)"
+          if [ "$PACKAGE_VERSION" != "$BUILD_VERSION" ]; then echo "ERRO: pacote baixado contém versão $PACKAGE_VERSION, esperado $BUILD_VERSION."; exit 1; fi
+          echo "E2E smoke test concluído: release publicada, manifesto assinado presente, API retornando metadados e .deb íntegro e versionado corretamente."
