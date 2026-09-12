@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   build-linux:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +47,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils openssl
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
@@ -147,3 +148,23 @@ jobs:
             exit 1
           fi
           gh release create "$TAG" release-artifact/KORCZAK-ERP-linux-amd64.deb release-artifact/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "KORCZAK ERP $TAG" --notes "Release oficial do KORCZAK ERP para Linux. Criado automaticamente a partir do push $GITHUB_SHA."
+
+      - name: Create signed update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_SIGNING_PRIVATE_KEY" ]; then
+            echo "ERRO: configure o secret UPDATE_SIGNING_PRIVATE_KEY antes de publicar releases assinadas."
+            exit 1
+          fi
+          ASSET_ID="$(gh release view "v${BUILD_VERSION}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="KORCZAK-ERP-linux-amd64.deb") | .id')"
+          SHA256="$(cut -d' ' -f1 release-artifact/SHA256SUMS.txt)"
+          printf '%s\n' "${BUILD_VERSION}" "${ASSET_ID}" "${SHA256}" "KORCZAK-ERP-linux-amd64.deb" > release-artifact/update-signing-payload.txt
+          printf '%s' "$UPDATE_SIGNING_PRIVATE_KEY" > /tmp/kz-update-signing-key.pem
+          openssl pkeyutl -sign -rawin -inkey /tmp/kz-update-signing-key.pem -in release-artifact/update-signing-payload.txt -out release-artifact/signature.bin
+          SIGNATURE="$(base64 -w0 release-artifact/signature.bin)"
+          printf '{"version":"%s","assetId":%s,"assetName":"%s","sha256":"%s","signature":"%s"}\n' "${BUILD_VERSION}" "${ASSET_ID}" "KORCZAK-ERP-linux-amd64.deb" "${SHA256}" "${SIGNATURE}" > release-artifact/UPDATE-MANIFEST.json
+          rm -f /tmp/kz-update-signing-key.pem release-artifact/update-signing-payload.txt release-artifact/signature.bin
+          gh release upload "v${BUILD_VERSION}" release-artifact/UPDATE-MANIFEST.json --repo "$GITHUB_REPOSITORY" --clobber
