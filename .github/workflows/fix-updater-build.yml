@@ -18,6 +18,16 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package.json
+      - name: Install desktop dependencies and generate icons
+        working-directory: apps/desktop
+        run: |
+          npm install --no-audit --no-fund --prefer-offline
+          npm run tauri icon src-tauri/icons/icon.svg
       - name: Patch Rust updater compile errors
         shell: bash
         run: |
