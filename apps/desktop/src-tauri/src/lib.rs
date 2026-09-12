@@ -1,4 +1,4 @@
-use std::{fs, path::{Path, PathBuf}, process::{Command, Stdio}, time::Duration};
+use std::{fs, fs::OpenOptions, path::{Path, PathBuf}, process::{Command, Stdio}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,23 @@ const UPDATE_PUBLIC_KEY_B64: &str = match option_env!("UPDATE_PUBLIC_KEY_B64") {
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateMarker { previous_version: String, target_version: String, backup_path: String }
 struct TempFile { path: PathBuf }
-impl TempFile { fn new(path: PathBuf) -> Self { Self { path } } fn path(&self) -> &Path { &self.path } fn keep(self) -> PathBuf { let path = self.path.clone(); std::mem::forget(self); path } }
+impl TempFile {
+    fn new_unique(prefix: &str, suffix: &str) -> Result<Self, String> {
+        let dir = std::env::temp_dir();
+        let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| "clock error".to_string())?.as_nanos();
+        for attempt in 0..32_u32 {
+            let path = dir.join(format!("{prefix}-{}-{seed}-{attempt}{suffix}", std::process::id()));
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(_) => return Ok(Self { path }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(format!("create secure temporary file: {error}")),
+            }
+        }
+        Err("unable to create unique temporary file".into())
+    }
+    fn path(&self) -> &Path { &self.path }
+    fn keep(self) -> PathBuf { let path = self.path.clone(); std::mem::forget(self); path }
+}
 impl Drop for TempFile { fn drop(&mut self) { let _ = fs::remove_file(&self.path); } }
 
 fn parse_version(value: &str) -> Result<[u64; 3], String> { let clean = value.strip_prefix('v').unwrap_or(value); let mut parts = clean.split('.'); let mut out = [0_u64; 3]; for slot in &mut out { let part = parts.next().ok_or_else(|| "invalid version".to_string())?; if part.is_empty() || part.len() > 10 || !part.chars().all(|c| c.is_ascii_digit()) { return Err("invalid version".into()); } *slot = part.parse::<u64>().map_err(|_| "invalid version".to_string())?; } if parts.next().is_some() { return Err("invalid version".into()); } Ok(out) }
@@ -39,21 +55,44 @@ fn write_marker(path: &Path, marker: &UpdateMarker) -> Result<(), String> { fs::
 #[tauri::command]
 async fn install_update(app: AppHandle, asset_url: String, version: String, current_version: String, asset_id: u64, expected_sha256: String, signature: String) -> Result<(), String> {
     parse_version(&version)?; parse_version(&current_version)?; if !is_newer(&version, &current_version)? { return Err("downgrade or same-version update rejected".into()); } if current_version != env!("CARGO_PKG_VERSION") { return Err("installed application version metadata is inconsistent".into()); } verify_signature(&version, asset_id, &expected_sha256, "KORCZAK-ERP-linux-amd64.deb", &signature)?; trusted_url(&asset_url)?;
-    let temp = TempFile::new(std::env::temp_dir().join(format!("kz-erp-{version}-{}-update.deb", std::process::id()))); download_to_file(&app, &asset_url, temp.path(), &expected_sha256, "download").await?; dpkg_package_name(temp.path())?;
+    let temp = TempFile::new_unique("kz-erp-update", ".deb")?; download_to_file(&app, &asset_url, temp.path(), &expected_sha256, "download").await?; dpkg_package_name(temp.path())?;
     let client = reqwest::Client::builder().user_agent("KORCZAK-ERP-Updater/2.0").timeout(Duration::from_secs(30)).build().map_err(|e| format!("create metadata client: {e}"))?; let previous_response = client.get(format!("{UPDATE_API}/api/v1/updates/previous?before={current_version}")).send().await.map_err(|e| format!("previous release lookup: {e}"))?; if !previous_response.status().is_success() { return Err("PREVIOUS_RELEASE_NOT_FOUND: não foi possível preparar rollback".into()); }
     let previous = previous_response.json::<serde_json::Value>().await.map_err(|e| format!("previous release metadata: {e}"))?; let previous_version = previous.get("version").and_then(|v| v.as_str()).ok_or_else(|| "invalid previous release metadata".to_string())?.to_string(); let previous_id = previous.get("assetId").and_then(|v| v.as_u64()).ok_or_else(|| "invalid previous release asset".to_string())?; let previous_sha = previous.get("sha256").and_then(|v| v.as_str()).ok_or_else(|| "invalid previous release digest".to_string())?.to_string(); if let Some(previous_signature) = previous.get("signature").and_then(|v| v.as_str()) { verify_signature(&previous_version, previous_id, &previous_sha, "KORCZAK-ERP-linux-amd64.deb", previous_signature)?; } if !is_newer(&current_version, &previous_version)? { return Err("invalid rollback version".into()); }
-    let backup = TempFile::new(std::env::temp_dir().join(format!("kz-erp-{current_version}-{}-rollback.deb", std::process::id()))); let backup_url = format!("{UPDATE_API}/api/v1/updates/asset/{previous_id}?version={previous_version}&sha256={previous_sha}&allowUnsigned=1"); download_to_file(&app, &backup_url, backup.path(), &previous_sha, "backup").await?; dpkg_package_name(backup.path())?;
+    let backup = TempFile::new_unique("kz-erp-rollback", ".deb")?; let backup_url = format!("{UPDATE_API}/api/v1/updates/asset/{previous_id}?version={previous_version}&sha256={previous_sha}&allowUnsigned=1"); download_to_file(&app, &backup_url, backup.path(), &previous_sha, "backup").await?; dpkg_package_name(backup.path())?;
     let marker = marker_path(); write_marker(&marker, &UpdateMarker { previous_version, target_version: version.clone(), backup_path: backup.path().to_string_lossy().into_owned() })?; let backup_path = backup.keep();
     let temp_arg = temp.path().to_string_lossy().into_owned(); let mut output = match run_privileged("/usr/bin/dpkg", &["--install", &temp_arg]).await { Ok(output) => output, Err(error) if error.starts_with("PKEXEC_UNAVAILABLE") || error.starts_with("PKEXEC_TIMEOUT") => { let manual = manual_download_path(&version); if let Some(parent) = manual.parent() { let _ = fs::create_dir_all(parent); } fs::copy(temp.path(), &manual).map_err(|e| format!("{error}; manual copy failed: {e}"))?; open_manual_installer(&manual); let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(format!("MANUAL_INSTALL_REQUIRED:{}", manual.display())); }, Err(error) => { let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(error); } };
     if !output.status.success() { let repair = run_privileged("/usr/bin/apt-get", &["-f", "install", "-y", "--no-install-recommends"]).await; if repair.as_ref().map(|o| o.status.success()).unwrap_or(false) { output = run_privileged("/usr/bin/dpkg", &["--install", &temp_arg]).await.map_err(|e| e.to_string())?; } else { let detail = String::from_utf8_lossy(&output.stderr).trim().to_string(); let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(if detail.is_empty() { "package installation failed".into() } else { format!("package installation failed: {detail}") }); } }
     if !output.status.success() { let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err("package installation failed after dependency repair".into()); }
     let installed = dpkg_installed_version().ok_or_else(|| "post-install package verification failed".to_string())?; if parse_version(&installed)? != parse_version(&version)? { let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err("post-install version verification failed".into()); }
-    let exe = std::env::current_exe().map_err(|e| format!("locate application: {e}"))?; let marker_arg = marker.to_string_lossy().into_owned(); Command::new(&exe).arg("--kz-update-watchdog").arg(&marker_arg).spawn().map_err(|e| format!("start update watchdog: {e}"))?; let mut child = Command::new(&exe).spawn().map_err(|e| format!("restart application: {e}"))?; std::thread::sleep(Duration::from_secs(3)); if let Some(status) = child.try_wait().map_err(|e| format!("verify application start: {e}"))? { let _ = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(format!("restart application failed with {status}")); }
+    let exe = std::env::current_exe().map_err(|e| format!("locate application: {e}"))?; let marker_arg = marker.to_string_lossy().into_owned(); Command::new(&exe).arg("--kz-update-watchdog").arg(&marker_arg).spawn().map_err(|e| format!("start update watchdog: {e}"))?; let mut child = Command::new(&exe).spawn().map_err(|e| format!("restart application: {e}"))?; std::thread::sleep(Duration::from_secs(3)); if let Some(status) = child.try_wait().map_err(|e| format!("verify application start: {e}"))? { let rollback = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); if rollback.as_ref().map(|value| value.status.success()).unwrap_or(false) { let _ = Command::new(&exe).spawn(); } return Err(format!("restart application failed with {status}")); }
     let _ = app.emit("update-progress", serde_json::json!({"phase":"restart","downloaded":1,"total":1,"percent":100})); std::process::exit(0);
 }
 
 #[tauri::command]
 fn confirm_update() -> Result<(), String> { let marker = marker_path(); if !marker.exists() { return Ok(()); } let pending: UpdateMarker = serde_json::from_slice(&fs::read(&marker).map_err(|e| format!("read update marker: {e}"))?).map_err(|e| format!("read update marker: {e}"))?; if pending.target_version != env!("CARGO_PKG_VERSION") { return Err("running version does not match pending update".into()); } let installed = dpkg_installed_version().unwrap_or_default(); if parse_version(&installed).ok() != parse_version(&pending.target_version).ok() { return Err("installed package version does not match pending update".into()); } fs::remove_file(&marker).map_err(|e| format!("clear update marker: {e}"))?; let _ = fs::remove_file(&pending.backup_path); Ok(()) }
-pub fn run_update_watchdog(marker_file: &str) { let path = PathBuf::from(marker_file); std::thread::sleep(WATCHDOG_DELAY); if !path.exists() { return; } let pending: UpdateMarker = match fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(value) => value, None => return }; let backup = PathBuf::from(&pending.backup_path); if !backup.is_file() { return; } if let Some(pkexec) = find_pkexec() { let _ = Command::new(pkexec).arg("/usr/bin/dpkg").args(["--install", "--force-downgrade", backup.to_string_lossy().as_ref()]).status(); } let _ = fs::remove_file(&path); let _ = fs::remove_file(backup); }
+pub fn run_update_watchdog(marker_file: &str) {
+    let path = PathBuf::from(marker_file);
+    std::thread::sleep(WATCHDOG_DELAY);
+    if !path.exists() { return; }
+    let pending: UpdateMarker = match fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(value) => value, None => return };
+    let backup = PathBuf::from(&pending.backup_path);
+    if !backup.is_file() { return; }
+    let Some(pkexec) = find_pkexec() else { return; };
+    let status = Command::new(pkexec).arg("/usr/bin/dpkg").args(["--install", "--force-downgrade", backup.to_string_lossy().as_ref()]).status();
+    if status.map(|value| value.success()).unwrap_or(false) {
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_file(&backup);
+        if let Ok(exe) = std::env::current_exe() { let _ = Command::new(exe).spawn(); }
+    }
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() { tauri::Builder::default().invoke_handler(tauri::generate_handler![install_update, confirm_update]).run(tauri::generate_context!()).expect("error while running KORCZAK ERP"); }
+pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(index) = args.iter().position(|arg| arg == "--kz-update-watchdog") {
+        if let Some(marker) = args.get(index + 1) {
+            run_update_watchdog(marker);
+            return;
+        }
+    }
+    tauri::Builder::default().invoke_handler(tauri::generate_handler![install_update, confirm_update]).run(tauri::generate_context!()).expect("error while running KORCZAK ERP");
+}
