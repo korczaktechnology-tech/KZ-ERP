@@ -1,6 +1,79 @@
+import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
+import { z } from 'zod';
 import type { Db } from 'mongodb';
+import { requireAuth } from './auth.js';
+import type { AuditLog, CoreBranch, CoreCompany } from './db.js';
+import { hasPermission, type Role } from './types.js';
+import { created, fail, ok, paginated, parsePagination } from './api.js';
 
-export function tenantRouter(_db: Db): Router {
-  return Router();
+const createSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), name: z.string().trim().min(2).max(120), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional().default(true) });
+const updateSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(), name: z.string().trim().min(2).max(120).optional(), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional() }).refine(v => Object.keys(v).length > 0, 'At least one field must be supplied');
+type Actor = { id: string; companyId: string; role: Role };
+const actor = (res: { locals: { user?: unknown } }): Actor => res.locals.user as Actor;
+const publicBranch = (b: CoreBranch) => ({ id: b._id, companyId: b.companyId, code: b.code, name: b.name, legalName: b.legalName, document: b.document, active: b.active, createdAt: b.createdAt, updatedAt: b.updatedAt });
+
+export function tenantRouter(db: Db): Router {
+  const router = Router();
+  const companies = db.collection<CoreCompany>('companies');
+  const branches = db.collection<CoreBranch>('branches');
+  const audit = db.collection<AuditLog>('audit_logs');
+  router.use(requireAuth);
+
+  router.get('/core/tenant', async (_req, res, next) => {
+    try {
+      const a = actor(res);
+      const company = await companies.findOne({ _id: a.companyId, active: true });
+      if (!company) { fail(res, 404, 'NOT_FOUND', 'Tenant not found'); return; }
+      const branchCount = await branches.countDocuments({ companyId: a.companyId, active: true });
+      ok(res, { tenant: { id: company._id, name: company.name, slug: company.slug, active: company.active, branchCount, createdAt: company.createdAt, updatedAt: company.updatedAt } });
+    } catch (e) { next(e); }
+  });
+
+  router.get('/core/branches', async (req, res, next) => {
+    try {
+      const a = actor(res); const p = parsePagination(req.query);
+      const [items, total] = await Promise.all([branches.find({ companyId: a.companyId }).sort({ code: 1 }).skip(p.offset).limit(p.limit).toArray(), branches.countDocuments({ companyId: a.companyId })]);
+      paginated(res, items.map(publicBranch), total, p);
+    } catch (e) { next(e); }
+  });
+
+  router.get('/core/branches/:id', async (req, res, next) => {
+    try { const a = actor(res); const b = await branches.findOne({ _id: req.params.id, companyId: a.companyId }); if (!b) { fail(res, 404, 'NOT_FOUND', 'Branch not found'); return; } ok(res, { branch: publicBranch(b) }); } catch (e) { next(e); }
+  });
+
+  router.post('/core/branches', async (req, res, next) => {
+    try {
+      const a = actor(res); if (!hasPermission(a.role, 'company:write')) { fail(res, 403, 'FORBIDDEN'); return; }
+      const input = createSchema.parse(req.body); const now = new Date();
+      const b: CoreBranch = { _id: randomUUID(), companyId: a.companyId, code: input.code, name: input.name, legalName: input.legalName, document: input.document, active: input.active, createdAt: now, updatedAt: now };
+      await branches.insertOne(b);
+      await audit.insertOne({ _id: randomUUID(), companyId: a.companyId, actorUserId: a.id, action: 'core.branch.create', resource: 'branch', resourceId: b._id, metadata: { code: b.code }, createdAt: now });
+      created(res, { branch: publicBranch(b) });
+    } catch (e) { next(e); }
+  });
+
+  router.patch('/core/branches/:id', async (req, res, next) => {
+    try {
+      const a = actor(res); if (!hasPermission(a.role, 'company:write')) { fail(res, 403, 'FORBIDDEN'); return; }
+      const input = updateSchema.parse(req.body); const current = await branches.findOne({ _id: req.params.id, companyId: a.companyId });
+      if (!current) { fail(res, 404, 'NOT_FOUND', 'Branch not found'); return; }
+      const set: Record<string, unknown> = { updatedAt: new Date() }; for (const key of ['code','name','legalName','document','active'] as const) if (input[key] !== undefined) set[key] = input[key];
+      await branches.updateOne({ _id: current._id, companyId: a.companyId }, { $set: set }); const updated = await branches.findOne({ _id: current._id, companyId: a.companyId });
+      if (!updated) { fail(res, 404, 'NOT_FOUND', 'Branch not found'); return; }
+      await audit.insertOne({ _id: randomUUID(), companyId: a.companyId, actorUserId: a.id, action: 'core.branch.update', resource: 'branch', resourceId: current._id, metadata: { changed: Object.keys(input) }, createdAt: new Date() });
+      ok(res, { branch: publicBranch(updated) });
+    } catch (e) { next(e); }
+  });
+
+  router.delete('/core/branches/:id', async (req, res, next) => {
+    try {
+      const a = actor(res); if (!hasPermission(a.role, 'company:write')) { fail(res, 403, 'FORBIDDEN'); return; }
+      const b = await branches.findOne({ _id: req.params.id, companyId: a.companyId, active: true }); if (!b) { fail(res, 404, 'NOT_FOUND', 'Active branch not found'); return; }
+      if (await branches.countDocuments({ companyId: a.companyId, active: true }) <= 1) { fail(res, 409, 'CONFLICT', 'At least one active branch is required'); return; }
+      const now = new Date(); await branches.updateOne({ _id: b._id, companyId: a.companyId }, { $set: { active: false, updatedAt: now } });
+      await audit.insertOne({ _id: randomUUID(), companyId: a.companyId, actorUserId: a.id, action: 'core.branch.deactivate', resource: 'branch', resourceId: b._id, createdAt: now }); ok(res, { id: b._id, active: false });
+    } catch (e) { next(e); }
+  });
+  return router;
 }
