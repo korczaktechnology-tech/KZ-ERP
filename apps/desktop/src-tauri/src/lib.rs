@@ -12,7 +12,7 @@ const MAX_DOWNLOAD_BYTES: u64 = 250 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const PRIVILEGED_TIMEOUT: Duration = Duration::from_secs(180);
 const WATCHDOG_DELAY: Duration = Duration::from_secs(60);
-const UPDATE_PUBLIC_KEY_B64: &str = option_env!("UPDATE_PUBLIC_KEY_B64").unwrap_or("");
+const UPDATE_PUBLIC_KEY_B64: &str = match option_env!("UPDATE_PUBLIC_KEY_B64") { Some(value) => value, None => "" };
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateMarker { previous_version: String, target_version: String, backup_path: String }
@@ -48,7 +48,7 @@ async fn install_update(app: AppHandle, asset_url: String, version: String, curr
     if !output.status.success() { let repair = run_privileged("/usr/bin/apt-get", &["-f", "install", "-y", "--no-install-recommends"]).await; if repair.as_ref().map(|o| o.status.success()).unwrap_or(false) { output = run_privileged("/usr/bin/dpkg", &["--install", &temp_arg]).await.map_err(|e| e.to_string())?; } else { let detail = String::from_utf8_lossy(&output.stderr).trim().to_string(); let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(if detail.is_empty() { "package installation failed".into() } else { format!("package installation failed: {detail}") }); } }
     if !output.status.success() { let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err("package installation failed after dependency repair".into()); }
     let installed = dpkg_installed_version().ok_or_else(|| "post-install package verification failed".to_string())?; if parse_version(&installed)? != parse_version(&version)? { let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err("post-install version verification failed".into()); }
-    let exe = std::env::current_exe().map_err(|e| format!("locate application: {e}"))?; let marker_arg = marker.to_string_lossy().into_owned(); Command::new(&exe).arg("--kz-update-watchdog").arg(&marker_arg).spawn().map_err(|e| format!("start update watchdog: {e}"))?; let mut child = Command::new(&exe).spawn().map_err(|e| format!("restart application: {e}"))?; std::thread::sleep(Duration::from_secs(3)); if let Some(status) = child.try_wait().map_err(|e| format!("verify application start: {e}"))? { let _ = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", &backup_path]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(format!("restart application failed with {status}")); }
+    let exe = std::env::current_exe().map_err(|e| format!("locate application: {e}"))?; let marker_arg = marker.to_string_lossy().into_owned(); Command::new(&exe).arg("--kz-update-watchdog").arg(&marker_arg).spawn().map_err(|e| format!("start update watchdog: {e}"))?; let mut child = Command::new(&exe).spawn().map_err(|e| format!("restart application: {e}"))?; std::thread::sleep(Duration::from_secs(3)); if let Some(status) = child.try_wait().map_err(|e| format!("verify application start: {e}"))? { let _ = run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await; let _ = fs::remove_file(&marker); let _ = fs::remove_file(&backup_path); return Err(format!("restart application failed with {status}")); }
     let _ = app.emit("update-progress", serde_json::json!({"phase":"restart","downloaded":1,"total":1,"percent":100})); std::process::exit(0);
 }
 
