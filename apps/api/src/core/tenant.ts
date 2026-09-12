@@ -9,6 +9,7 @@ import { created, fail, ok, paginated, parsePagination } from './api.js';
 type CoreBranch = { _id: string; companyId: string; code: string; name: string; legalName?: string; document?: string; active: boolean; createdAt: Date; updatedAt: Date };
 type CoreCompany = { _id?: string; name: string; slug: string; active: boolean; createdAt: Date; updatedAt: Date };
 type CoreUser = { _id?: string; companyId: string; email: string; name: string; passwordHash: string; role: 'owner' | 'admin' | 'manager' | 'user' | 'viewer'; active: boolean; createdAt: Date; updatedAt: Date };
+type CoreAuthSession = { _id: string; companyId: string; userId: string; tokenHash: string; accessJti: string; createdAt: Date; expiresAt: Date };
 type AuditLog = { _id?: string; companyId: string; actorUserId: string; action: string; resource: string; resourceId?: string; metadata?: Record<string, unknown>; createdAt: Date };
 const createSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), name: z.string().trim().min(2).max(120), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional().default(true) });
 const updateSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(), name: z.string().trim().min(2).max(120).optional(), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional() }).refine(v => Object.keys(v).length > 0, 'At least one field must be supplied');
@@ -21,7 +22,7 @@ async function provisionTenant(db: Db, input: z.infer<typeof provisionSchema>, a
   const session = db.client.startSession();
   try {
     return await session.withTransaction(async () => {
-      const companies = db.collection<CoreCompany>('companies'); const users = db.collection<CoreUser>('users'); const branches = db.collection<CoreBranch>('branches'); const audit = db.collection<AuditLog>('audit_logs');
+      const companies = db.collection<CoreCompany>('companies'); const users = db.collection<CoreUser>('users'); const branches = db.collection<CoreBranch>('branches'); const audit = db.collection<AuditLog>('audit_logs'); const sessions = db.collection<CoreAuthSession>('auth_sessions');
       const now = new Date(); const companyId = randomUUID(); const ownerId = randomUUID(); const branchId = randomUUID();
       if (await companies.findOne({ slug: input.slug }, { session })) throw Object.assign(new Error('TENANT_SLUG_ALREADY_EXISTS'), { code: 'TENANT_SLUG_ALREADY_EXISTS' });
       const company: CoreCompany = { _id: companyId, name: input.companyName, slug: input.slug, active: true, createdAt: now, updatedAt: now };
@@ -29,7 +30,7 @@ async function provisionTenant(db: Db, input: z.infer<typeof provisionSchema>, a
       const branch: CoreBranch = { _id: branchId, companyId, code: input.branchCode, name: input.branchName, active: true, createdAt: now, updatedAt: now };
       await companies.insertOne(company, { session }); await users.insertOne(owner, { session }); await branches.insertOne(branch, { session });
       await audit.insertOne({ _id: randomUUID(), companyId, actorUserId, action: 'core.tenant.provision', resource: 'tenant', resourceId: companyId, metadata: { sourceCompanyId: actorCompanyId, ownerUserId: ownerId, branchId }, createdAt: now }, { session });
-      const refresh = createRefreshToken(); const accessJti = randomUUID(); await db.collection('auth_sessions').insertOne({ _id: randomUUID(), companyId, userId: ownerId, tokenHash: refresh.hash, accessJti, createdAt: now, expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) }, { session });
+      const refresh = createRefreshToken(); const accessJti = randomUUID(); await sessions.insertOne({ _id: randomUUID(), companyId, userId: ownerId, tokenHash: refresh.hash, accessJti, createdAt: now, expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) }, { session });
       return { companyId, ownerId, branchId, accessToken: createToken({ id: ownerId, companyId, email: owner.email, role: 'owner', name: owner.name }, accessJti), refreshToken: refresh.token };
     });
   } finally { await session.endSession(); }
