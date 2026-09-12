@@ -91,6 +91,21 @@ jobs:
           VERSION="$VERSION" node -e "const fs=require('fs'); for(const f of ['package.json','src-tauri/tauri.conf.json']){const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\\n')}"
           sed -i -E "s/^version = \"[^\"]+\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 
+      - name: Prepare update signing key
+        env:
+          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$UPDATE_SIGNING_PRIVATE_KEY" ]; then
+            echo "ERRO: configure o secret UPDATE_SIGNING_PRIVATE_KEY antes de publicar releases assinadas."
+            exit 1
+          fi
+          printf '%s' "$UPDATE_SIGNING_PRIVATE_KEY" > /tmp/kz-update-signing-key.pem
+          PUBLIC_KEY="$(openssl pkey -in /tmp/kz-update-signing-key.pem -pubout -outform DER 2>/dev/null | tail -c 32 | base64 -w0)"
+          if [ "${#PUBLIC_KEY}" -ne 44 ]; then echo "ERRO: chave Ed25519 inválida"; exit 1; fi
+          echo "UPDATE_PUBLIC_KEY_B64=$PUBLIC_KEY" >> "$GITHUB_ENV"
+          rm -f /tmp/kz-update-signing-key.pem
+
       - name: Generate application icons
         working-directory: apps/desktop
         run: npm run tauri icon src-tauri/icons/icon.svg
@@ -155,10 +170,6 @@ jobs:
           UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          if [ -z "$UPDATE_SIGNING_PRIVATE_KEY" ]; then
-            echo "ERRO: configure o secret UPDATE_SIGNING_PRIVATE_KEY antes de publicar releases assinadas."
-            exit 1
-          fi
           ASSET_ID="$(gh release view "v${BUILD_VERSION}" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | select(.name=="KORCZAK-ERP-linux-amd64.deb") | .id')"
           SHA256="$(cut -d' ' -f1 release-artifact/SHA256SUMS.txt)"
           printf '%s\n' "${BUILD_VERSION}" "${ASSET_ID}" "${SHA256}" "KORCZAK-ERP-linux-amd64.deb" > release-artifact/update-signing-payload.txt
