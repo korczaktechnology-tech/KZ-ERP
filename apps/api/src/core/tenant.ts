@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import type { Db, ClientSession } from 'mongodb';
-import { requireActiveSession, createRefreshToken, createToken } from './auth.js';
-import { hashPassword } from './auth.js';
+import type { Db } from 'mongodb';
+import { requireActiveSession, createRefreshToken, createToken, hashPassword } from './auth.js';
 import { hasPermission, type Role } from './types.js';
 import { created, fail, ok, paginated, parsePagination } from './api.js';
 
