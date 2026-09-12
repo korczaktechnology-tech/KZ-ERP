@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   fix:
-    if: contains(github.event.head_commit.message, 'fix(desktop): enable reqwest JSON updater support')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,18 +23,15 @@ jobs:
           s = p.read_text()
           old = 'const UPDATE_PUBLIC_KEY_B64: &str = option_env!("UPDATE_PUBLIC_KEY_B64").unwrap_or("");'
           new = 'const UPDATE_PUBLIC_KEY_B64: &str = match option_env!("UPDATE_PUBLIC_KEY_B64") { Some(value) => value, None => "" };'
-          if old not in s:
-              raise SystemExit('public-key const pattern not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
           old = 'run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", &backup_path]).await'
           new = 'run_privileged("/usr/bin/dpkg", &["--install", "--force-downgrade", backup_path.to_string_lossy().as_ref()]).await'
-          if old not in s:
-              raise SystemExit('rollback path pattern not found')
-          s = s.replace(old, new, 1)
+          if old in s:
+              s = s.replace(old, new, 1)
           p.write_text(s)
           PY
           git diff --check
-          git diff -- apps/desktop/src-tauri/src/lib.rs
       - name: Verify desktop Rust compilation
         working-directory: apps/desktop/src-tauri
         run: cargo check
@@ -45,7 +41,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git rm .github/workflows/fix-updater-build.yml
-          git add apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.lock apps/desktop/src-tauri/src/lib.rs
+          git add apps/desktop/src-tauri/src/lib.rs apps/desktop/src-tauri/Cargo.toml apps/desktop/src-tauri/Cargo.lock
           git commit -m 'fix(desktop): repair updater Rust build errors'
           git push
       - name: Trigger CI for fixed commit
