@@ -17,6 +17,7 @@ export async function checkForUpdate(setStatus: (status: string) => void) {
   let unlisten: (() => void) | undefined;
   try {
     versionParts(CURRENT_VERSION);
+    await confirmPendingUpdate();
     setStatus('Verificando atualizações…');
     const controller = new AbortController(); const timer = window.setTimeout(() => controller.abort(), 10_000);
     let response: Response;
@@ -36,14 +37,7 @@ export async function checkForUpdate(setStatus: (status: string) => void) {
     });
 
     const assetUrl = `${UPDATE_API}/api/v1/updates/asset/${body.assetId}?version=${encodeURIComponent(body.version)}&sha256=${encodeURIComponent(body.sha256.toLowerCase())}`;
-    await invoke('install_update', {
-      assetUrl,
-      version: body.version,
-      currentVersion: CURRENT_VERSION,
-      assetId: body.assetId,
-      expectedSha256: body.sha256.toLowerCase(),
-      signature: body.signature
-    });
+    await invoke('install_update', { assetUrl, version: body.version, currentVersion: CURRENT_VERSION, assetId: body.assetId, expectedSha256: body.sha256.toLowerCase(), signature: body.signature });
     setStatus(`Atualização v${versionParts(body.version).join('.')} instalada • reiniciando…`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown error';
@@ -55,12 +49,7 @@ export async function checkForUpdate(setStatus: (status: string) => void) {
     else if (/MANUAL_INSTALL_REQUIRED:(.+)/i.test(message)) setStatus('Instalação requer confirmação manual • pacote foi aberto');
     else if (/package installation failed|start package installer|download:|download HTTP|checksum mismatch|write update|restart application|post-install/i.test(message)) setStatus('Falha na instalação • rollback automático disponível');
     else setStatus('Falha na atualização • a versão atual foi preservada');
-  } finally {
-    unlisten?.();
-    checking = false;
-  }
+  } finally { unlisten?.(); checking = false; }
 }
 
-export async function confirmPendingUpdate() {
-  try { await invoke('confirm_update'); } catch (error) { console.warn('Updater confirmation:', error); }
-}
+export async function confirmPendingUpdate() { try { await invoke('confirm_update'); } catch (error) { console.warn('Updater confirmation:', error); } }
