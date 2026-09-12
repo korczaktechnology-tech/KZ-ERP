@@ -12,7 +12,7 @@ const MAX_DOWNLOAD_BYTES: u64 = 250 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(180);
 const PRIVILEGED_TIMEOUT: Duration = Duration::from_secs(180);
 const WATCHDOG_DELAY: Duration = Duration::from_secs(60);
-const UPDATE_PUBLIC_KEY_B64: &str = "k5eXcWX4grTQ4b13U/tr3GmWun8Zn1sA28RXlJOpvII=";
+const UPDATE_PUBLIC_KEY_B64: &str = option_env!("UPDATE_PUBLIC_KEY_B64").unwrap_or("");
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdateMarker { previous_version: String, target_version: String, backup_path: String }
@@ -24,7 +24,7 @@ fn parse_version(value: &str) -> Result<[u64; 3], String> { let clean = value.st
 fn is_newer(remote: &str, local: &str) -> Result<bool, String> { Ok(parse_version(remote)? > parse_version(local)?) }
 fn valid_sha256(value: &str) -> bool { value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()) }
 fn canonical_payload(version: &str, asset_id: u64, sha256: &str, asset_name: &str) -> Vec<u8> { format!("{version}\n{asset_id}\n{sha256}\n{asset_name}\n").into_bytes() }
-fn verify_signature(version: &str, asset_id: u64, sha256: &str, asset_name: &str, signature: &str) -> Result<(), String> { if !valid_sha256(sha256) { return Err("invalid update digest".into()); } let bytes = BASE64.decode(UPDATE_PUBLIC_KEY_B64).map_err(|_| "invalid updater public key".to_string())?; let key_bytes: [u8; 32] = bytes.try_into().map_err(|_| "invalid updater public key".to_string())?; let key = VerifyingKey::from_bytes(&key_bytes).map_err(|_| "invalid updater public key".to_string())?; let sig = BASE64.decode(signature).map_err(|_| "invalid update signature".to_string())?; let signature = Signature::from_slice(&sig).map_err(|_| "invalid update signature".to_string())?; key.verify(&canonical_payload(version, asset_id, sha256, asset_name), &signature).map_err(|_| "update signature verification failed".to_string()) }
+fn verify_signature(version: &str, asset_id: u64, sha256: &str, asset_name: &str, signature: &str) -> Result<(), String> { if UPDATE_PUBLIC_KEY_B64.is_empty() { return Err("update verification key is not embedded".into()); } if !valid_sha256(sha256) { return Err("invalid update digest".into()); } let bytes = BASE64.decode(UPDATE_PUBLIC_KEY_B64).map_err(|_| "invalid updater public key".to_string())?; let key_bytes: [u8; 32] = bytes.try_into().map_err(|_| "invalid updater public key".to_string())?; let key = VerifyingKey::from_bytes(&key_bytes).map_err(|_| "invalid updater public key".to_string())?; let sig = BASE64.decode(signature).map_err(|_| "invalid update signature".to_string())?; let signature = Signature::from_slice(&sig).map_err(|_| "invalid update signature".to_string())?; key.verify(&canonical_payload(version, asset_id, sha256, asset_name), &signature).map_err(|_| "update signature verification failed".to_string()) }
 fn trusted_url(url: &str) -> Result<reqwest::Url, String> { let parsed = reqwest::Url::parse(url).map_err(|_| "invalid update URL".to_string())?; if parsed.scheme() != "https" || parsed.host_str() != Some(UPDATE_HOST) { return Err("update URL is not trusted".into()); } Ok(parsed) }
 fn find_pkexec() -> Option<PathBuf> { std::env::var_os("PATH").and_then(|path| std::env::split_paths(&path).map(|p| p.join("pkexec")).find(|p| p.is_file())).or_else(|| { let path = PathBuf::from("/usr/bin/pkexec"); path.is_file().then_some(path) }) }
 async fn run_privileged(program: &str, args: &[&str]) -> Result<std::process::Output, String> { let pkexec = find_pkexec().ok_or_else(|| "PKEXEC_UNAVAILABLE: pkexec não está instalado".to_string())?; timeout(PRIVILEGED_TIMEOUT, AsyncCommand::new(pkexec).arg(program).args(args).output()).await.map_err(|_| "PKEXEC_TIMEOUT: autenticação/instalação excedeu o tempo limite".to_string())?.map_err(|e| format!("start package installer: {e}")) }
@@ -34,6 +34,7 @@ fn dpkg_package_name(path: &Path) -> Result<(), String> { let path_text = path.t
 fn marker_path() -> PathBuf { std::env::temp_dir().join("kz-erp-update-pending.json") }
 fn manual_download_path(version: &str) -> PathBuf { let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(std::env::temp_dir); home.join("Downloads").join(format!("KORCZAK-ERP-{version}.deb")) }
 fn open_manual_installer(path: &Path) { let _ = Command::new("xdg-open").arg(path).stdout(Stdio::null()).stderr(Stdio::null()).spawn(); }
+fn write_marker(path: &Path, marker: &UpdateMarker) -> Result<(), String> { fs::write(path, serde_json::to_vec(marker).map_err(|_| "serialize update marker".to_string())?).map_err(|e| format!("write update marker: {e}")) }
 
 #[tauri::command]
 async fn install_update(app: AppHandle, asset_url: String, version: String, current_version: String, asset_id: u64, expected_sha256: String, signature: String) -> Result<(), String> {
@@ -51,7 +52,6 @@ async fn install_update(app: AppHandle, asset_url: String, version: String, curr
     let _ = app.emit("update-progress", serde_json::json!({"phase":"restart","downloaded":1,"total":1,"percent":100})); std::process::exit(0);
 }
 
-fn write_marker(path: &Path, marker: &UpdateMarker) -> Result<(), String> { fs::write(path, serde_json::to_vec(marker).map_err(|_| "serialize update marker".to_string())?).map_err(|e| format!("write update marker: {e}")) }
 #[tauri::command]
 fn confirm_update() -> Result<(), String> { let marker = marker_path(); if !marker.exists() { return Ok(()); } let pending: UpdateMarker = serde_json::from_slice(&fs::read(&marker).map_err(|e| format!("read update marker: {e}"))?).map_err(|e| format!("read update marker: {e}"))?; if pending.target_version != env!("CARGO_PKG_VERSION") { return Err("running version does not match pending update".into()); } let installed = dpkg_installed_version().unwrap_or_default(); if parse_version(&installed).ok() != parse_version(&pending.target_version).ok() { return Err("installed package version does not match pending update".into()); } fs::remove_file(&marker).map_err(|e| format!("clear update marker: {e}"))?; let _ = fs::remove_file(&pending.backup_path); Ok(()) }
 pub fn run_update_watchdog(marker_file: &str) { let path = PathBuf::from(marker_file); std::thread::sleep(WATCHDOG_DELAY); if !path.exists() { return; } let pending: UpdateMarker = match fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) { Some(value) => value, None => return }; let backup = PathBuf::from(&pending.backup_path); if !backup.is_file() { return; } if let Some(pkexec) = find_pkexec() { let _ = Command::new(pkexec).arg("/usr/bin/dpkg").args(["--install", "--force-downgrade", backup.to_string_lossy().as_ref()]).status(); } let _ = fs::remove_file(&path); let _ = fs::remove_file(backup); }
