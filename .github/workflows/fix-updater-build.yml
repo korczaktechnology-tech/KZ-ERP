@@ -9,11 +9,15 @@ permissions:
 
 jobs:
   fix:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
       - name: Patch Rust updater compile errors
         shell: bash
         run: |
@@ -32,6 +36,7 @@ jobs:
           p.write_text(s)
           PY
           git diff --check
+      - uses: dtolnay/rust-toolchain@stable
       - name: Verify desktop Rust compilation
         working-directory: apps/desktop/src-tauri
         run: cargo check
