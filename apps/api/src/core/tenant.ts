@@ -1,21 +1,42 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import type { Db } from 'mongodb';
-import { requireActiveSession } from './auth.js';
+import type { Db, ClientSession } from 'mongodb';
+import { requireActiveSession, createRefreshToken, createToken } from './auth.js';
+import { hashPassword } from './auth.js';
 import { hasPermission, type Role } from './types.js';
 import { created, fail, ok, paginated, parsePagination } from './api.js';
 
 type CoreBranch = { _id: string; companyId: string; code: string; name: string; legalName?: string; document?: string; active: boolean; createdAt: Date; updatedAt: Date };
 type CoreCompany = { _id?: string; name: string; slug: string; active: boolean; createdAt: Date; updatedAt: Date };
+type CoreUser = { _id?: string; companyId: string; email: string; name: string; passwordHash: string; role: 'owner' | 'admin' | 'manager' | 'user' | 'viewer'; active: boolean; createdAt: Date; updatedAt: Date };
 type AuditLog = { _id?: string; companyId: string; actorUserId: string; action: string; resource: string; resourceId?: string; metadata?: Record<string, unknown>; createdAt: Date };
 const createSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), name: z.string().trim().min(2).max(120), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional().default(true) });
 const updateSchema = z.object({ code: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(), name: z.string().trim().min(2).max(120).optional(), legalName: z.string().trim().min(2).max(180).optional(), document: z.string().trim().max(32).optional(), active: z.boolean().optional() }).refine(v => Object.keys(v).length > 0, 'At least one field must be supplied');
+const provisionSchema = z.object({ companyName: z.string().trim().min(2).max(120), slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(80), branchCode: z.string().trim().min(1).max(40).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).default('MATRIZ'), branchName: z.string().trim().min(2).max(120).default('Matriz'), ownerName: z.string().trim().min(2).max(120), ownerEmail: z.string().email().max(320), ownerPassword: z.string().min(10).max(200), provisioningKey: z.string().min(1) });
 type Actor = { id: string; companyId: string; role: Role };
 const actor = (res: { locals: { user?: unknown } }): Actor => res.locals.user as Actor;
 const publicBranch = (b: CoreBranch) => ({ id: b._id, companyId: b.companyId, code: b.code, name: b.name, legalName: b.legalName, document: b.document, active: b.active, createdAt: b.createdAt, updatedAt: b.updatedAt });
 export async function ensureTenantCollections(db: Db): Promise<void> { const names = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name)); if (!names.has('branches')) await db.createCollection('branches'); const branches = db.collection<CoreBranch>('branches'); await branches.createIndex({ companyId: 1, code: 1 }, { unique: true, name: 'branches_company_code_unique' }); await branches.createIndex({ companyId: 1, active: 1, code: 1 }, { name: 'branches_company_active_code' }); await branches.createIndex({ companyId: 1, createdAt: -1 }, { name: 'branches_company_created' }); }
+async function provisionTenant(db: Db, input: z.infer<typeof provisionSchema>, actorUserId: string, actorCompanyId: string) {
+  const session = db.client.startSession();
+  try {
+    return await session.withTransaction(async () => {
+      const companies = db.collection<CoreCompany>('companies'); const users = db.collection<CoreUser>('users'); const branches = db.collection<CoreBranch>('branches'); const audit = db.collection<AuditLog>('audit_logs');
+      const now = new Date(); const companyId = randomUUID(); const ownerId = randomUUID(); const branchId = randomUUID();
+      if (await companies.findOne({ slug: input.slug }, { session })) throw Object.assign(new Error('TENANT_SLUG_ALREADY_EXISTS'), { code: 'TENANT_SLUG_ALREADY_EXISTS' });
+      const company: CoreCompany = { _id: companyId, name: input.companyName, slug: input.slug, active: true, createdAt: now, updatedAt: now };
+      const owner: CoreUser = { _id: ownerId, companyId, email: input.ownerEmail.toLowerCase(), name: input.ownerName, passwordHash: hashPassword(input.ownerPassword), role: 'owner', active: true, createdAt: now, updatedAt: now };
+      const branch: CoreBranch = { _id: branchId, companyId, code: input.branchCode, name: input.branchName, active: true, createdAt: now, updatedAt: now };
+      await companies.insertOne(company, { session }); await users.insertOne(owner, { session }); await branches.insertOne(branch, { session });
+      await audit.insertOne({ _id: randomUUID(), companyId, actorUserId, action: 'core.tenant.provision', resource: 'tenant', resourceId: companyId, metadata: { sourceCompanyId: actorCompanyId, ownerUserId: ownerId, branchId }, createdAt: now }, { session });
+      const refresh = createRefreshToken(); const accessJti = randomUUID(); await db.collection('auth_sessions').insertOne({ _id: randomUUID(), companyId, userId: ownerId, tokenHash: refresh.hash, accessJti, createdAt: now, expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) }, { session });
+      return { companyId, ownerId, branchId, accessToken: createToken({ id: ownerId, companyId, email: owner.email, role: 'owner', name: owner.name }, accessJti), refreshToken: refresh.token };
+    });
+  } finally { await session.endSession(); }
+}
 export function tenantRouter(db: Db): Router { const router = Router(); const companies = db.collection<CoreCompany>('companies'); const branches = db.collection<CoreBranch>('branches'); const audit = db.collection<AuditLog>('audit_logs'); const ready = ensureTenantCollections(db); router.use(requireActiveSession(db)); router.use(async (_req, _res, next) => { try { await ready; next(); } catch (e) { next(e); } });
+router.post('/auth/provision-tenant', async (req,res,next)=>{try{const a=actor(res);const input=provisionSchema.parse(req.body);const key=process.env.CORE_TENANT_PROVISIONING_KEY;if(!key||input.provisioningKey!==key){fail(res,403,'FORBIDDEN');return;}const result=await provisionTenant(db,input,a.id,a.companyId);created(res,{tenant:{id:result.companyId,companyId:result.companyId},ownerUserId:result.ownerId,branchId:result.branchId,accessToken:result.accessToken,refreshToken:result.refreshToken});}catch(e){if(e instanceof Error&&e.message==='TENANT_SLUG_ALREADY_EXISTS'){fail(res,409,'CONFLICT','Tenant slug already exists');return;}next(e);}});
 router.get('/core/tenant', async (_req,res,next)=>{try{const a=actor(res);const company=await companies.findOne({_id:a.companyId,active:true});if(!company){fail(res,404,'NOT_FOUND','Tenant not found');return;}const branchCount=await branches.countDocuments({companyId:a.companyId,active:true});ok(res,{tenant:{id:company._id,name:company.name,slug:company.slug,active:company.active,branchCount,createdAt:company.createdAt,updatedAt:company.updatedAt}});}catch(e){next(e);}});
 router.get('/core/branches',async(req,res,next)=>{try{const a=actor(res);const p=parsePagination(req.query);const [items,total]=await Promise.all([branches.find({companyId:a.companyId}).sort({code:1}).skip(p.offset).limit(p.limit).toArray(),branches.countDocuments({companyId:a.companyId})]);paginated(res,items.map(publicBranch),total,p);}catch(e){next(e);}});
 router.get('/core/branches/:id',async(req,res,next)=>{try{const a=actor(res);const b=await branches.findOne({_id:req.params.id,companyId:a.companyId});if(!b){fail(res,404,'NOT_FOUND','Branch not found');return;}ok(res,{branch:publicBranch(b)});}catch(e){next(e);}});
