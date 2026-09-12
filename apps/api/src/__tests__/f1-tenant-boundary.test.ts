@@ -13,20 +13,23 @@ describe('F1 tenant boundary', () => {
     assert.throws(() => tenantFilter('  '), /TENANT_ID_REQUIRED/);
   });
 
-  it('rejects attempts to mutate companyId through the tenant collection guard', async () => {
+  it('rejects attempts to mutate companyId through the tenant collection guard', () => {
     const calls: unknown[] = [];
     const fake = {
       collection: () => ({
         updateOne: async (...args: unknown[]) => { calls.push(args); return { matchedCount: 1 }; },
         updateMany: async (...args: unknown[]) => { calls.push(args); return { matchedCount: 1 }; },
         findOne: async () => null,
-        find: () => ({}) ,
+        find: () => ({}),
         insertOne: async () => ({ acknowledged: true }),
         deleteOne: async () => ({ deletedCount: 0 })
       })
     } as never;
     const collection = tenantCollection(fake, 'sample');
-    await assert.rejects(() => collection.updateOne('tenant-a', { _id: 'x' } as never, { $set: { companyId: 'tenant-b' } } as never), /TENANT_ID_IMMUTABLE/);
+    assert.throws(
+      () => collection.updateOne('tenant-a', { _id: 'x' } as never, { $set: { companyId: 'tenant-b' } } as never),
+      /TENANT_ID_IMMUTABLE/
+    );
     assert.equal(calls.length, 0);
   });
 });
