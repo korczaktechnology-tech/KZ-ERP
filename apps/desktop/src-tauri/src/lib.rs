@@ -3,6 +3,20 @@ use sha2::{Digest, Sha256};
 
 const UPDATE_HOST: &str = "kz-erp.onrender.com";
 
+fn run_privileged(program: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    let pkexec = std::env::var_os("PATH")
+        .and_then(|path| std::env::split_paths(&path).map(|p| p.join("pkexec")).find(|p| p.is_file()))
+        .unwrap_or_else(|| PathBuf::from("/usr/bin/pkexec"));
+    if !pkexec.is_file() {
+        return Err("pkexec is not installed; install PolicyKit/pkexec to enable automatic updates".into());
+    }
+    Command::new(pkexec)
+        .arg(program)
+        .args(args)
+        .output()
+        .map_err(|error| format!("start package installer: {error}"))
+}
+
 #[tauri::command]
 async fn install_update(asset_url: String, version: String, expected_sha256: String) -> Result<(), String> {
     if version.len() > 32 || !version.chars().all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c)) {
@@ -18,6 +32,7 @@ async fn install_update(asset_url: String, version: String, expected_sha256: Str
 
     let temp_dir = std::env::temp_dir();
     let temp: PathBuf = temp_dir.join(format!("kz-erp-{}-{}.deb", version, std::process::id()));
+    let temp_arg = temp.to_string_lossy().into_owned();
     let client = reqwest::Client::builder()
         .user_agent("KORCZAK-ERP-Updater")
         .build()
@@ -39,30 +54,31 @@ async fn install_update(asset_url: String, version: String, expected_sha256: Str
     }
     fs::write(&temp, &bytes).map_err(|e| format!("write update: {e}"))?;
 
-    let install = Command::new("pkexec")
-        .arg("apt-get")
-        .arg("install")
-        .arg("-y")
-        .arg("--no-install-recommends")
-        .arg(&temp)
-        .output();
-    let status = match install {
-        Ok(output) if output.status.success() => output.status,
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exit status {}", output.status) };
+    // Install the already-verified local package as root. dpkg is deterministic for a
+    // local .deb; if a future package introduces dependencies, repair them with apt and retry.
+    let mut output = run_privileged("/usr/bin/dpkg", &["--install", &temp_arg])?;
+    if !output.status.success() {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let repair = run_privileged("/usr/bin/apt-get", &["-f", "install", "-y", "--no-install-recommends"])?;
+        if !repair.status.success() {
+            let repair_detail = String::from_utf8_lossy(&repair.stderr).trim().to_string();
             let _ = fs::remove_file(&temp);
-            return Err(format!("package installation failed: {detail}"));
+            return Err(if !repair_detail.is_empty() {
+                format!("package installation failed: {repair_detail}")
+            } else if !detail.is_empty() {
+                format!("package installation failed: {detail}")
+            } else {
+                format!("package installation failed: {}", repair.status)
+            });
         }
-        Err(error) => {
-            let _ = fs::remove_file(&temp);
-            return Err(format!("start package installer: {error}"));
-        }
-    };
-    if !status.success() {
+        output = run_privileged("/usr/bin/dpkg", &["--install", &temp_arg])?;
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else if !stdout.is_empty() { stdout } else { format!("exit status {}", output.status) };
         let _ = fs::remove_file(&temp);
-        return Err(format!("package installation failed: {status}"));
+        return Err(format!("package installation failed: {detail}"));
     }
     let _ = fs::remove_file(&temp);
 
