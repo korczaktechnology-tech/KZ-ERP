@@ -24,7 +24,7 @@ const schemas = {
   contacts: withId({ partyId: id, name: z.string().trim().min(1).max(160), role: z.string().trim().max(80).optional(), email: z.string().email().max(320).optional(), phone: z.string().trim().max(40).optional(), mobile: z.string().trim().max(40).optional(), active: z.boolean().default(true) }),
   locations: withId({ ...base.shape, warehouseId: id, parentId: id.optional(), kind: z.enum(['zone', 'aisle', 'rack', 'shelf', 'bin']), capacity: z.number().finite().nonnegative().max(1e12).optional() }),
   classifications: withId({ ...base.shape, type: z.string().trim().min(1).max(80), parentId: id.optional() }),
-  attachments: withId({ entityType: z.string().trim().min(1).max(80), entityId: id, fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(160), size: z.number().int().nonnegative().max(50_000_000), storageKey: z.string().trim().min(1).max(500), checksum: z.string().trim().max(128).optional(), metadata: z.record(z.unknown()).optional() }),
+  attachments: withId({ entityType: z.string().trim().min(1).max(80), entityId: id, fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(160), size: z.number().int().nonnegative().max(50_000_000), storageKey: z.string().trim().min(1).max(500), storageManaged: z.boolean().default(false), checksum: z.string().trim().max(128).optional(), metadata: z.record(z.unknown()).optional() }),
   relationships: withId({ sourceType: z.string().trim().min(1).max(80), sourceId: id, relation: z.string().trim().min(1).max(80), targetType: z.string().trim().min(1).max(80), targetId: id, metadata: z.record(z.unknown()).optional() }),
 };
 
@@ -34,16 +34,12 @@ const physical: Record<string, string> = { products: 'products', parties: 'parti
 const names = Object.keys(physical);
 
 export function f2ImportRouter(db: Db): Router {
-  const r = Router();
-  r.use(requireAuth);
+  const r = Router(); r.use(requireAuth);
   r.post('/bulk/import/:entity', async (req, res, next) => {
     try {
-      const actor = res.locals.user as Actor;
-      if (!hasPermission(actor.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN');
-      const entity = String(req.params.entity);
-      if (!names.includes(entity)) return fail(res, 404, 'NOT_FOUND', `Unsupported master-data entity '${entity}'`);
-      if (!Array.isArray(req.body)) return fail(res, 400, 'VALIDATION_ERROR', 'Import body must be an array');
-      if (req.body.length > 1000) return fail(res, 413, 'VALIDATION_ERROR', 'Maximum 1000 records per import');
+      const actor = res.locals.user as Actor; if (!hasPermission(actor.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN');
+      const entity = String(req.params.entity); if (!names.includes(entity)) return fail(res, 404, 'NOT_FOUND', `Unsupported master-data entity '${entity}'`);
+      if (!Array.isArray(req.body)) return fail(res, 400, 'VALIDATION_ERROR', 'Import body must be an array'); if (req.body.length > 1000) return fail(res, 413, 'VALIDATION_ERROR', 'Maximum 1000 records per import');
       const result = await importF2Batch({ db, companyId: actor.companyId, entity, records: req.body, schema: schemas[entity as keyof typeof schemas], collection: tenantCollection<Doc>(db, physical[entity]) });
       await db.collection('audit_logs').insertOne({ _id: randomUUID(), companyId: actor.companyId, actorUserId: actor.id, action: `master-data.${entity}.bulk-import`, resource: entity, resourceId: randomUUID(), metadata: result, createdAt: new Date(), updatedAt: new Date() });
       ok(res, { entity, ...result });
