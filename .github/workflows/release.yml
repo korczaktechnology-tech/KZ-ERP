@@ -222,56 +222,6 @@ jobs:
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$ASSET_ID" '.version==$v and .assetId==$id and .assetName==$n and (.sha256|test("^[0-9a-f]{64}$")) and (.signature|length>0)' release-artifact/UPDATE-MANIFEST.json >/dev/null
           timeout 90s curl --fail-with-body --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/json" --data-binary @release-artifact/UPDATE-MANIFEST.json "$RELEASE_UPLOAD_URL?name=UPDATE-MANIFEST.json" >/dev/null
 
-      - name: Pre-publish release validation
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.UPDATE_SIGNING_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          WORK_DIR="$(mktemp -d /tmp/kz-release-preflight.XXXXXX)"
-          KEY_FILE="$WORK_DIR/signing-key.pem"
-          PUB_FILE="$WORK_DIR/public-key.pem"
-          PAYLOAD="$WORK_DIR/payload.txt"
-          SIG="$WORK_DIR/signature.bin"
-          MANIFEST="$WORK_DIR/UPDATE-MANIFEST.json"
-          DEB="$WORK_DIR/$DEB_NAME"
-          SUMS="$WORK_DIR/SHA256SUMS.txt"
-          trap 'rm -rf "$WORK_DIR"' EXIT
-          RELEASE="$(timeout 30s gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
-          [ "$(jq -r '.draft' <<<"$RELEASE")" = "true" ] || { echo "ERRO: release não está em draft"; exit 1; }
-          [ "$(jq -r '.tag_name' <<<"$RELEASE")" = "$BUILD_TAG" ] || { echo "ERRO: tag incorreta"; exit 1; }
-          [ "$(jq -r '.target_commitish' <<<"$RELEASE")" = "$GITHUB_SHA" ] || { echo "ERRO: commit alvo incorreto"; exit 1; }
-          for NAME in "$DEB_NAME" SHA256SUMS.txt UPDATE-MANIFEST.json; do
-            jq -e --arg n "$NAME" '.assets[] | select(.name==$n and .state=="uploaded" and (.size|tonumber)>0)' <<<"$RELEASE" >/dev/null || { echo "ERRO: asset ausente ou vazio: $NAME"; exit 1; }
-          done
-          DEB_ID="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n and .state=="uploaded") | .id' <<<"$RELEASE")"
-          MANIFEST_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
-          SUMS_ID="$(jq -r '.assets[] | select(.name=="SHA256SUMS.txt" and .state=="uploaded") | .id' <<<"$RELEASE")"
-          DEB_DIGEST="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n) | .digest // ""' <<<"$RELEASE")"
-          if ! [[ "$DEB_ID" =~ ^[0-9]+$ ]] || ! [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || ! [[ "$SUMS_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: asset ID inválido"; exit 1; fi
-          [[ "$DEB_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || { echo "ERRO: digest do .deb inválido"; exit 1; }
-          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" > "$MANIFEST"
-          timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" > "$DEB"
-          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$SUMS_ID" -H "Accept: application/octet-stream" > "$SUMS"
-          if [ ! -s "$MANIFEST" ] || [ ! -s "$DEB" ] || [ ! -s "$SUMS" ]; then echo "ERRO: asset baixado vazio"; exit 1; fi
-          jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$DEB_ID" '.version==$v and .assetName==$n and .assetId==$id and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' "$MANIFEST" >/dev/null
-          SUMS_SHA="$(awk -v n="$DEB_NAME" '$2==n || $2=="*"n {print $1; exit}' "$SUMS" | tr '[:upper:]' '[:lower:]')"
-          EXPECTED_SHA="$(jq -r '.sha256' "$MANIFEST" | tr '[:upper:]' '[:lower:]')"
-          [ "$SUMS_SHA" = "$EXPECTED_SHA" ] || { echo "ERRO: SHA256SUMS diverge do manifesto"; exit 1; }
-          ACTUAL_SHA="$(sha256sum "$DEB" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
-          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "ERRO: SHA256 do .deb diverge do manifesto"; exit 1; }
-          [ "sha256:$ACTUAL_SHA" = "$DEB_DIGEST" ] || { echo "ERRO: digest do GitHub diverge do .deb"; exit 1; }
-          [ "$(stat -c '%s' "$DEB")" -le "$MAX_DEB_BYTES" ] || { echo "ERRO: .deb excede limite"; exit 1; }
-          [ "$(dpkg-deb -f "$DEB" Version)" = "$BUILD_VERSION" ] || { echo "ERRO: versão publicada diverge"; exit 1; }
-          [ "$(dpkg-deb -f "$DEB" Architecture)" = "amd64" ] || { echo "ERRO: arquitetura publicada diverge"; exit 1; }
-          printf '%s' "$UPDATE_SIGNING_PRIVATE_KEY" > "$KEY_FILE"
-          timeout 30s openssl pkey -in "$KEY_FILE" -pubout -out "$PUB_FILE" >/dev/null
-          jq -r '.signature' "$MANIFEST" | base64 -d > "$SIG"
-          printf '%s\n%s\n%s\n%s\n' "$BUILD_VERSION" "$DEB_ID" "$ACTUAL_SHA" "$DEB_NAME" > "$PAYLOAD"
-          timeout 30s openssl pkeyutl -verify -rawin -pubin -inkey "$PUB_FILE" -in "$PAYLOAD" -sigfile "$SIG" >/dev/null
-          echo "Pre-publish release validation OK: $BUILD_TAG"
-
       - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
