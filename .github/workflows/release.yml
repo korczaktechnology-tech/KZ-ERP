@@ -251,9 +251,9 @@ jobs:
           DEB_DIGEST="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n) | .digest // ""' <<<"$RELEASE")"
           if ! [[ "$DEB_ID" =~ ^[0-9]+$ ]] || ! [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || ! [[ "$SUMS_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: asset ID inválido"; exit 1; fi
           [[ "$DEB_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || { echo "ERRO: digest do .deb inválido"; exit 1; }
-          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" --output "$MANIFEST"
-          timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" --output "$DEB"
-          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$SUMS_ID" -H "Accept: application/octet-stream" --output "$SUMS"
+          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" > "$MANIFEST"
+          timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" > "$DEB"
+          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$SUMS_ID" -H "Accept: application/octet-stream" > "$SUMS"
           if [ ! -s "$MANIFEST" ] || [ ! -s "$DEB" ] || [ ! -s "$SUMS" ]; then echo "ERRO: asset baixado vazio"; exit 1; fi
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$DEB_ID" '.version==$v and .assetName==$n and .assetId==$id and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' "$MANIFEST" >/dev/null
           SUMS_SHA="$(awk -v n="$DEB_NAME" '$2==n || $2=="*"n {print $1; exit}' "$SUMS" | tr '[:upper:]' '[:lower:]')"
@@ -299,8 +299,8 @@ jobs:
           MANIFEST_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
           DEB_ID="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n and .state=="uploaded") | .id' <<<"$RELEASE")"
           if ! [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || ! [[ "$DEB_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: asset IDs inválidos"; exit 1; fi
-          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" --output "$MANIFEST"
-          timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" --output "$DEB"
+          timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" > "$MANIFEST"
+          timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" > "$DEB"
           if [ ! -s "$MANIFEST" ] || [ ! -s "$DEB" ]; then echo "ERRO: asset baixado vazio"; exit 1; fi
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$DEB_ID" '.version==$v and .assetName==$n and .assetId==$id and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' "$MANIFEST" >/dev/null
           ACTUAL_SHA="$(sha256sum "$DEB" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
