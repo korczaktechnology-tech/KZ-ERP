@@ -324,7 +324,9 @@ jobs:
           timeout 180s curl --fail --silent --show-error --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 150 "$UPDATE_API_BASE/api/v1/updates/asset/$DEB_ID?version=$BUILD_VERSION&sha256=$ACTUAL_SHA" -o "$API_DEB"
           [ "$(sha256sum "$API_DEB" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')" = "$ACTUAL_SHA" ] || { echo "ERRO: /asset retornou SHA incorreto"; exit 1; }
           WRONG_SHA="$(printf '0%.0s' {1..64})"
-          if [ "$WRONG_SHA" = "$ACTUAL_SHA" ]; then WRONG_SHA="$(printf 'f%.0s' {1..64}); fi
+          if [ "$WRONG_SHA" = "$ACTUAL_SHA" ]; then
+            WRONG_SHA="$(printf 'f%.0s' {1..64})"
+          fi
           API_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 10 --max-time 60 "$UPDATE_API_BASE/api/v1/updates/asset/$DEB_ID?version=$BUILD_VERSION&sha256=$WRONG_SHA")"
           [ "$API_STATUS" = "409" ] || { echo "ERRO: /asset aceitou SHA adulterado (HTTP $API_STATUS)"; exit 1; }
           API_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 10 --max-time 60 "$UPDATE_API_BASE/api/v1/updates/asset/$MANIFEST_ID?version=$BUILD_VERSION&sha256=$ACTUAL_SHA")"
