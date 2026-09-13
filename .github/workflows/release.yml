@@ -1,6 +1,8 @@
 name: Release Linux
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -12,12 +14,17 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-linux
+  cancel-in-progress: false
+
 env:
   UPDATE_API_URL: https://kz-erp.onrender.com
   DEB_NAME: KORCZAK-ERP-linux-amd64.deb
 
 jobs:
   build-linux:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
