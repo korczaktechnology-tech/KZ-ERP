@@ -29,8 +29,7 @@ KZ-ERP/
 │   ├── api/
 │   ├── data/
 │   ├── events/
-│   ├── runbooks/
-│   └── security/
+│   └── runbooks/
 ├── .github/workflows/
 ├── CONTRIBUTING.md
 └── CHANGELOG.md
@@ -64,7 +63,7 @@ Variáveis da API ficam em `apps/api/.env.example`. Nunca coloque valores reais 
 
 Cada push em `main` e cada pull request para `main` executa verificação TypeScript, testes e build da API, build do desktop, validação do pacote Linux `.deb`, validação da configuração MongoDB e validação da infraestrutura.
 
-O workflow de Release Linux continua responsável por publicar releases em tags `vX.Y.Z`.
+O workflow de Release Linux pode ser executado manualmente ou por um push em `main` cuja mensagem contenha `[release]`. O pipeline cria a Release em draft, publica somente após validar os três assets e executa um smoke test de download.
 
 ## Operação
 
