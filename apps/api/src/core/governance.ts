@@ -7,7 +7,6 @@ import { fail, ok, paginated, parsePagination } from './api.js';
 import { ROLE_PERMISSIONS, ROLES, type AuthUser, type Role } from './types.js';
 
 type BaseDoc = { _id: string; companyId: string; name: string; code: string; active: boolean; createdAt: Date; updatedAt: Date };
-type RoleDoc = { _id: string; companyId: string; key: Role; name: string; description?: string; active: boolean; createdAt: Date; updatedAt: Date };
 type PermissionDoc = { _id: string; key: string; name: string; description?: string; createdAt: Date; updatedAt: Date };
 type RolePermissionDoc = { _id: string; companyId: string; roleKey: Role; permissionKey: string; effect: 'allow' | 'deny'; createdAt: Date; updatedAt: Date };
 type ScopeDoc = { _id: string; companyId: string; userId: string; module?: string; branchIds: string[]; unitIds: string[]; departmentIds: string[]; costCenterIds: string[]; teamIds: string[]; effect: 'allow' | 'deny'; active: boolean; createdAt: Date; updatedAt: Date };
@@ -26,7 +25,6 @@ const rolePermissionSchema = z.object({ roleKey: z.enum(ROLES), permissionKey: z
 const scopeSchema = z.object({ userId: z.string().min(1), module: z.string().trim().max(80).optional(), branchIds: z.array(z.string().min(1)).max(200).default([]), unitIds: z.array(z.string().min(1)).max(200).default([]), departmentIds: z.array(z.string().min(1)).max(200).default([]), costCenterIds: z.array(z.string().min(1)).max(200).default([]), teamIds: z.array(z.string().min(1)).max(200).default([]), effect: z.enum(['allow', 'deny']).default('allow'), active: z.boolean().default(true) });
 const policySchema = z.object({ name: nameSchema, effect: z.enum(['allow', 'deny']), permission: z.string().trim().min(2).max(120), resource: z.string().trim().max(120).optional(), conditions: z.record(z.string(), z.unknown()).default({}), active: z.boolean().default(true) });
 const configSchema = z.object({ scope: z.enum(['company','branch','unit','department','module','user']), scopeId: z.string().min(1).optional(), module: z.string().trim().max(80).optional(), key: z.string().trim().min(1).max(160), value: z.unknown(), active: z.boolean().default(true) });
-const roleNames: Record<Role,string> = { owner:'Owner', admin:'Administrator', manager:'Manager', user:'Usuário', viewer:'Visualizador' };
 
 function actor(res: { locals: { user?: unknown } }): Actor { return res.locals.user as Actor; }
 function canWrite(a: Actor): boolean { return a.role === 'owner' || a.role === 'admin'; }
@@ -37,20 +35,17 @@ async function audit(db: Db, companyId: string, actorUserId: string, action: str
 async function ensureCollection(db: Db, name: string): Promise<void> { const names = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name)); if (!names.has(name)) await db.createCollection(name); }
 
 export async function ensureGovernanceCollections(db: Db): Promise<void> {
-  for (const n of ['roles','permissions','role_permissions','access_scopes','access_policies','org_units','departments','cost_centers','teams','core_configurations']) await ensureCollection(db,n);
-  const roles = db.collection<RoleDoc>('roles');
-  for (const key of ROLES) await roles.updateOne({ companyId: '__SYSTEM__', key }, { $setOnInsert: { _id:id(), companyId:'__SYSTEM__', key, name:roleNames[key], active:true, createdAt:now(), updatedAt:now() } }, { upsert:true });
+  for (const n of ['permissions','role_permissions','access_scopes','access_policies','org_units','departments','cost_centers','teams','core_configurations']) await ensureCollection(db,n);
   const permissions = db.collection<PermissionDoc>('permissions');
   const keys = new Set(Object.values(ROLE_PERMISSIONS).flat());
   keys.delete('*');
   for (const key of keys) await permissions.updateOne({ key }, { $setOnInsert:{ _id:id(), key, name:key, createdAt:now(), updatedAt:now() } }, { upsert:true });
-  for (const name of ['roles','permissions','role_permissions','access_scopes','access_policies','org_units','departments','cost_centers','teams','core_configurations']) { await db.collection(name).createIndex({ companyId:1, createdAt:-1 }, { name:`${name}_company_created` }); }
-  await roles.createIndex({ companyId:1, key:1 }, { unique:true, name:'roles_company_key_unique' });
   await permissions.createIndex({ key:1 }, { unique:true, name:'permissions_key_unique' });
   await db.collection('role_permissions').createIndex({ companyId:1, roleKey:1, permissionKey:1 }, { unique:true, name:'role_permissions_unique' });
-  await db.collection('access_scopes').createIndex({ companyId:1,userId:1,module:1,active:1 });
-  await db.collection('access_policies').createIndex({ companyId:1,permission:1,active:1 });
+  await db.collection('access_scopes').createIndex({ companyId:1,userId:1,module:1,active:1 }, { name:'access_scopes_lookup' });
+  await db.collection('access_policies').createIndex({ companyId:1,permission:1,resource:1,active:1 }, { name:'access_policies_lookup' });
   await db.collection('core_configurations').createIndex({ companyId:1,scope:1,scopeId:1,module:1,key:1 }, { unique:true, name:'core_config_unique' });
+  for (const name of ['org_units','departments','cost_centers','teams']) await db.collection(name).createIndex({ companyId:1,createdAt:-1 }, { name:`${name}_company_created` });
   for (const key of ROLES) { const defaults = ROLE_PERMISSIONS[key]; for (const permissionKey of defaults) if (permissionKey !== '*') await db.collection<RolePermissionDoc>('role_permissions').updateOne({ companyId:'__SYSTEM__',roleKey:key,permissionKey },{$setOnInsert:{_id:id(),companyId:'__SYSTEM__',roleKey:key,permissionKey,effect:'allow',createdAt:now(),updatedAt:now()}},{upsert:true}); }
 }
 
@@ -101,7 +96,7 @@ export function governanceRouter(db: Db): Router {
     router.post(`/core/${kind}`, async (req,res,next)=>{ try { const a=actor(res); if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;} const input=baseCreate.parse(req.body); const t=now(); const doc={_id:id(),companyId:a.companyId,...input,createdAt:t,updatedAt:t}; await collectionFor(kind).insertOne(doc); await audit(db,a.companyId,a.id,`core.${kind}.create`,kind,doc._id,{code:doc.code}); ok(res,{[kind.slice(0,-1)]:doc},201); }catch(e){next(e);} });
     router.patch(`/core/${kind}/:id`, async (req,res,next)=>{ try { const a=actor(res); if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;} const input=baseUpdate.parse(req.body); const t=now(); const result=await collectionFor(kind).updateOne({_id:req.params.id,companyId:a.companyId},{$set:{...input,updatedAt:t}}); if(result.matchedCount!==1){fail(res,404,'NOT_FOUND');return;} const doc=await collectionFor(kind).findOne({_id:req.params.id,companyId:a.companyId}); await audit(db,a.companyId,a.id,`core.${kind}.update`,kind,req.params.id,{changed:Object.keys(input)}); ok(res,{[kind.slice(0,-1)]:doc}); }catch(e){next(e);} });
   }
-  router.get('/core/rbac/roles', async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}const roles=await db.collection<RoleDoc>('roles').find({$or:[{companyId:'__SYSTEM__'},{companyId:a.companyId}]}).sort({key:1}).toArray();ok(res,{roles});}catch(e){next(e);}});
+  router.get('/core/rbac/roles', async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}ok(res,{roles:ROLES.map(key=>({key,name:key==='owner'?'Owner':key==='admin'?'Administrator':key==='manager'?'Manager':key==='user'?'Usuário':'Visualizador',active:true}))});}catch(e){next(e);}});
   router.get('/core/rbac/permissions', async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}ok(res,{permissions:await db.collection<PermissionDoc>('permissions').find({}).sort({key:1}).toArray()});}catch(e){next(e);}});
   router.post('/core/rbac/permissions', async(req,res,next)=>{try{const a=actor(res);if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;}const input=permissionSchema.parse(req.body);const t=now();const doc={_id:id(),...input,createdAt:t,updatedAt:t};await db.collection<PermissionDoc>('permissions').insertOne(doc);await audit(db,a.companyId,a.id,'core.rbac.permission.create','permission',doc._id,{key:doc.key});ok(res,{permission:doc},201);}catch(e){next(e);}});
   router.put('/core/rbac/role-permissions', async(req,res,next)=>{try{const a=actor(res);if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;}const input=rolePermissionSchema.parse(req.body);const t=now();const doc={_id:id(),companyId:a.companyId,...input,createdAt:t,updatedAt:t};await db.collection<RolePermissionDoc>('role_permissions').updateOne({companyId:a.companyId,roleKey:input.roleKey,permissionKey:input.permissionKey},{$set:{effect:input.effect,updatedAt:t},$setOnInsert:{_id:doc._id,createdAt:t}},{upsert:true});await audit(db,a.companyId,a.id,'core.rbac.role_permission.update','role_permission',`${input.roleKey}:${input.permissionKey}`,input);ok(res,{rolePermission:{...input,companyId:a.companyId}});}catch(e){next(e);}});
