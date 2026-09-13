@@ -30,28 +30,28 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Lint GitHub Actions workflows
+      - name: Lint GitHub Actions workflow
         shell: bash
         run: |
           set -euo pipefail
           curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash
           ./actionlint .github/workflows/release.yml
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: apps/desktop/package.json
 
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -117,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           node -e 'const fs=require("fs"),v=process.env.VERSION;for(const f of ["package.json","src-tauri/tauri.conf.json"]){const d=JSON.parse(fs.readFileSync(f,"utf8"));d.version=v;fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")}'
-          node -e 'const fs=require("fs"),v=process.env.VERSION,p="src-tauri/Cargo.toml",t=fs.readFileSync(p,"utf8"),u=t.replace(/^version\s*=\s*"[^"]+"/m,"version = \\\""+v+"\\\"");if(u===t)throw new Error("ERRO: não foi possível atualizar Cargo.toml");fs.writeFileSync(p,u)'
+          node -e 'const fs=require("fs"),v=process.env.VERSION,p="src-tauri/Cargo.toml",t=fs.readFileSync(p,"utf8"),u=t.replace(/^version\s*=\s*"[^"]+"/m,"version = "+JSON.stringify(v));if(u===t)throw new Error("ERRO: não foi possível atualizar Cargo.toml");fs.writeFileSync(p,u)'
           [ "$(node -p "require('./package.json').version")" = "$VERSION" ]
           [ "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION" ]
           [ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n1)" = "$VERSION" ]
@@ -177,7 +177,7 @@ jobs:
           test -s release-artifact/SHA256SUMS.txt
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: KORCZAK-ERP-linux-deb-${{ github.sha }}
           path: release-artifact/
