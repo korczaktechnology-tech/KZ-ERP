@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: kz-erp-api
+    name: kz-erp
     runtime: docker
     rootDir: apps/api
     plan: free
