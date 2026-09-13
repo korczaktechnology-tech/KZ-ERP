@@ -9,26 +9,20 @@ import { fail, noContent, ok } from '../../core/api.js';
 import { validateF2Reference } from './f2-hardening.js';
 
 type Actor = { id: string; companyId: string; role: Role };
-type Doc = { _id: string; companyId: string; [key: string]: unknown };
+type Doc = { _id: string; companyId: string; [key: string]: any };
 type Audit = { _id: string; companyId: string; actorUserId: string; action: string; resource: string; resourceId: string; metadata?: Record<string, unknown>; createdAt: Date; updatedAt: Date };
 
 const MAX_ATTACHMENT_BYTES = 50_000_000;
 const entities = ['products', 'parties', 'addresses', 'units', 'price_lists', 'prices', 'warehouses', 'categories', 'brands', 'contacts', 'locations', 'classifications', 'attachments', 'relationships'] as const;
-const physical: Record<(typeof entities)[number], string> = {
-  products: 'products', parties: 'parties', addresses: 'addresses', units: 'units', price_lists: 'price_lists', prices: 'prices', warehouses: 'warehouses',
-  categories: 'product_categories', brands: 'product_brands', contacts: 'party_contacts', locations: 'warehouse_locations', classifications: 'classifications', attachments: 'master_attachments', relationships: 'master_relationships',
-};
+const physical: Record<(typeof entities)[number], string> = { products: 'products', parties: 'parties', addresses: 'addresses', units: 'units', price_lists: 'price_lists', prices: 'prices', warehouses: 'warehouses', categories: 'product_categories', brands: 'product_brands', contacts: 'party_contacts', locations: 'warehouse_locations', classifications: 'classifications', attachments: 'master_attachments', relationships: 'master_relationships' };
 
 function actor(res: Response): Actor { return res.locals.user as Actor; }
-function audit(db: Db, a: Actor, action: string, resource: string, resourceId: string, metadata?: Record<string, unknown>) {
-  const now = new Date();
-  return db.collection<Audit>('audit_logs').insertOne({ _id: randomUUID(), companyId: a.companyId, actorUserId: a.id, action, resource, resourceId, metadata, createdAt: now, updatedAt: now });
-}
+function audit(db: Db, a: Actor, action: string, resource: string, resourceId: string, metadata?: Record<string, unknown>) { const now = new Date(); return db.collection<Audit>('audit_logs').insertOne({ _id: randomUUID(), companyId: a.companyId, actorUserId: a.id, action, resource, resourceId, metadata, createdAt: now, updatedAt: now }); }
 
 export function f2IoRouter(db: Db): Router {
   const router = Router();
   router.use(requireAuth);
-  const collections = Object.fromEntries(entities.map((entity) => [entity, tenantCollection<Doc>(db, physical[entity])])) as Record<(typeof entities)[number], ReturnType<typeof tenantCollection<Doc>>>;
+  const collections = Object.fromEntries(entities.map((entity) => [entity, tenantCollection<Doc>(db, physical[entity])])) as Record<(typeof entities)[number], any>;
   const bucket = new GridFSBucket(db, { bucketName: 'f2_attachments' });
 
   router.post('/attachments/upload', async (req: Request, res: Response, next: NextFunction) => {
@@ -44,32 +38,20 @@ export function f2IoRouter(db: Db): Router {
       if (!Number.isInteger(size) || size < 1 || size > MAX_ATTACHMENT_BYTES) return fail(res, 413, 'VALIDATION_ERROR', 'Attachment size must be between 1 byte and 50 MB');
       const referenceError = await validateF2Reference(db, a.companyId, entityType, entityId, 'Attachment target');
       if (referenceError) return fail(res, 422, 'VALIDATION_ERROR', referenceError);
-
       const id = randomUUID();
       const upload = bucket.openUploadStreamWithId(id as any, fileName, { metadata: { companyId: a.companyId, entityType, entityId, mimeType } });
-      let received = 0;
-      let aborted = false;
-      req.on('data', (chunk: Buffer) => {
-        received += chunk.length;
-        if (received > MAX_ATTACHMENT_BYTES && !aborted) { aborted = true; req.destroy(new Error('Attachment exceeds 50 MB')); }
-      });
+      let received = 0; let aborted = false;
+      req.on('data', (chunk: Buffer) => { received += chunk.length; if (received > MAX_ATTACHMENT_BYTES && !aborted) { aborted = true; req.destroy(new Error('Attachment exceeds 50 MB')); } });
       upload.on('error', next);
       upload.on('finish', async () => {
-        if (aborted || received !== size) {
-          await bucket.delete(id as any).catch(() => undefined);
-          if (!res.headersSent) fail(res, 400, 'VALIDATION_ERROR', 'Attachment byte count does not match Content-Length');
-          return;
-        }
+        if (aborted || received !== size) { await bucket.delete(id as any).catch(() => undefined); if (!res.headersSent) fail(res, 400, 'VALIDATION_ERROR', 'Attachment byte count does not match Content-Length'); return; }
         try {
           const now = new Date();
           const doc: Doc = { _id: id, companyId: a.companyId, entityType, entityId, fileName, mimeType, size, storageKey: `f2_attachments/${a.companyId}/${id}`, storageManaged: true, createdAt: now, updatedAt: now };
           await collections.attachments.insertOne(a.companyId, doc);
           await audit(db, a, 'master-data.attachment.upload', 'attachment', id, { size, entityType, entityId });
           ok(res, { attachment: { id, entityType, entityId, fileName, mimeType, size, storageKey: doc.storageKey, storageManaged: true, createdAt: now, updatedAt: now } });
-        } catch (error) {
-          await bucket.delete(id as any).catch(() => undefined);
-          next(error);
-        }
+        } catch (error) { await bucket.delete(id as any).catch(() => undefined); next(error); }
       });
       req.pipe(upload);
     } catch (error) { next(error); }
@@ -77,49 +59,33 @@ export function f2IoRouter(db: Db): Router {
 
   router.get('/attachments/:id/download', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const a = actor(res);
-      if (!hasPermission(a.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN');
-      const id = String(req.params.id);
-      const doc = await collections.attachments.findOne(a.companyId, { _id: id });
-      if (!doc) return fail(res, 404, 'NOT_FOUND');
-      if (!doc.storageManaged) return fail(res, 409, 'CONFLICT', 'Attachment is externally managed');
+      const a = actor(res); if (!hasPermission(a.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN');
+      const id = String(req.params.id); const doc = await collections.attachments.findOne(a.companyId, { _id: id });
+      if (!doc) return fail(res, 404, 'NOT_FOUND'); if (!doc.storageManaged) return fail(res, 409, 'CONFLICT', 'Attachment is externally managed');
       const file = await db.collection('f2_attachments.files').findOne({ _id: id as any, 'metadata.companyId': a.companyId }, { projection: { _id: 1 } });
       if (!file) return fail(res, 410, 'GONE', 'Attachment binary is missing');
-      res.setHeader('Content-Type', String(doc.mimeType));
-      res.setHeader('Content-Length', String(doc.size));
-      res.setHeader('Content-Disposition', `attachment; filename="${String(doc.fileName).replace(/["\\\r\n]/g, '_')}"`);
-      const stream = bucket.openDownloadStream(id as any);
-      stream.on('error', next);
-      stream.pipe(res);
+      res.setHeader('Content-Type', String(doc.mimeType)); res.setHeader('Content-Length', String(doc.size)); res.setHeader('Content-Disposition', `attachment; filename="${String(doc.fileName).replace(/["\\\r\n]/g, '_')}"`);
+      const stream = bucket.openDownloadStream(id as any); stream.on('error', next); stream.pipe(res);
     } catch (error) { next(error); }
   });
 
   router.delete('/attachments/:id/file', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const a = actor(res);
-      if (!hasPermission(a.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN');
-      const id = String(req.params.id);
-      const doc = await collections.attachments.findOne(a.companyId, { _id: id });
-      if (!doc) return fail(res, 404, 'NOT_FOUND');
-      if (!doc.storageManaged) return fail(res, 409, 'CONFLICT', 'Attachment is externally managed');
+      const a = actor(res); if (!hasPermission(a.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN');
+      const id = String(req.params.id); const doc = await collections.attachments.findOne(a.companyId, { _id: id });
+      if (!doc) return fail(res, 404, 'NOT_FOUND'); if (!doc.storageManaged) return fail(res, 409, 'CONFLICT', 'Attachment is externally managed');
       await bucket.delete(id as any).catch((error) => { if (!String(error).toLowerCase().includes('not found')) throw error; });
-      await collections.attachments.deleteOne(a.companyId, { _id: id });
-      await audit(db, a, 'master-data.attachment.delete-file', 'attachment', id);
-      noContent(res);
+      await collections.attachments.deleteOne(a.companyId, { _id: id }); await audit(db, a, 'master-data.attachment.delete-file', 'attachment', id); noContent(res);
     } catch (error) { next(error); }
   });
 
   router.get('/bulk/export/:entity', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const a = actor(res);
-      if (!hasPermission(a.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN');
-      const entity = String(req.params.entity) as (typeof entities)[number];
-      if (!entities.includes(entity)) return fail(res, 404, 'NOT_FOUND', 'Unsupported master-data entity');
-      const docs = await collections[entity].find(a.companyId, {}).sort({ createdAt: 1 }).toArray();
-      await audit(db, a, `master-data.${entity}.bulk-export`, entity, randomUUID(), { count: docs.length });
-      ok(res, { entity, count: docs.length, records: docs.map((doc) => { const { companyId: _companyId, ...publicDoc } = doc; return publicDoc; }) });
+      const a = actor(res); if (!hasPermission(a.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN');
+      const entity = String(req.params.entity) as (typeof entities)[number]; if (!entities.includes(entity)) return fail(res, 404, 'NOT_FOUND', 'Unsupported master-data entity');
+      const docs = await collections[entity].find(a.companyId, {}).sort({ createdAt: 1 }).toArray(); await audit(db, a, `master-data.${entity}.bulk-export`, entity, randomUUID(), { count: docs.length });
+      ok(res, { entity, count: docs.length, records: docs.map((doc: Doc) => { const { companyId: _companyId, ...publicDoc } = doc; return publicDoc; }) });
     } catch (error) { next(error); }
   });
-
   return router;
 }
