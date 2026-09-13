@@ -1,17 +1,17 @@
 name: CI
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+
 permissions:
   contents: read
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+
 jobs:
   api:
-    name: API check, test and build
+    name: API validation
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -20,38 +20,22 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/api/package.json
-      - name: Install dependencies
+      - name: Install API dependencies
         working-directory: apps/api
         run: npm install --no-audit --no-fund --prefer-offline
-      - name: Type check
+      - name: Typecheck API
         working-directory: apps/api
-        run: npm run check
-      - name: Unit tests
+        run: npm run typecheck
+      - name: Test API
         working-directory: apps/api
-        run: npm test
-      - name: Production build
+        run: npm test -- --runInBand
+      - name: Build API
         working-directory: apps/api
         run: npm run build
+
   desktop:
-    name: Desktop type check and build
+    name: Desktop validation
     runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/desktop/package.json
-      - name: Install frontend dependencies
-        working-directory: apps/desktop
-        run: npm install --no-audit --no-fund --prefer-offline
-      - name: Type check and frontend build
-        working-directory: apps/desktop
-        run: npm run build
-  tauri:
-    name: Linux Tauri package validation
-    runs-on: ubuntu-22.04
-    needs: [api, desktop]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -62,21 +46,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
-      - name: Install frontend dependencies
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils openssl jq dpkg-dev curl
+      - name: Install desktop dependencies
         working-directory: apps/desktop
         run: npm install --no-audit --no-fund --prefer-offline
-      - name: Generate icons
+      - name: Typecheck desktop
         working-directory: apps/desktop
-        run: npm run tauri icon src-tauri/icons/icon.svg
-      - name: Build .deb
+        run: npm run typecheck
+      - name: Build desktop
         working-directory: apps/desktop
         env:
+          VITE_APP_VERSION: 0.1.3
           VITE_API_URL: https://kz-erp.onrender.com
           VITE_UPDATE_API_URL: https://kz-erp.onrender.com
         run: npm run tauri build -- --bundles deb
-      - name: Validate package
+      - name: Verify Debian package
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -84,6 +70,7 @@ jobs:
           test "${#packages[@]}" -eq 1
           dpkg-deb --info "${packages[0]}"
           dpkg-deb --contents "${packages[0]}" >/dev/null
+
   mongo-config:
     name: MongoDB configuration validation
     runs-on: ubuntu-22.04
@@ -92,6 +79,7 @@ jobs:
       - name: Verify MongoDB is the only application database configuration
         run: |
           set -euo pipefail
-          ! grep -RniE 'postgres|postgresql|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD' \
-            apps infra render.yaml docker-compose.yml
+          if grep -RniE 'postgres|postgresql|PGHOST|PGPORT|PGDATABASE|PGUSER|PGPASSWORD' apps infra render.yaml docker-compose.yml; then
+            echo "ERRO: configuração PostgreSQL detectada"; exit 1
+          fi
           grep -Rni 'MONGODB_URI' apps/api infra render.yaml docker-compose.yml
