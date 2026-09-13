@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 const base = (process.env.KZ_ERP_API_URL || 'https://kz-erp.onrender.com').replace(/\/$/, '');
 const email = process.env.KZ_ERP_E2E_EMAIL;
 const password = process.env.KZ_ERP_E2E_PASSWORD;
@@ -41,7 +43,7 @@ const categoryId = category.category.id;
 await check('category read', () => call(`/api/v1/master-data/f2/categories/${categoryId}`, { headers: auth() }));
 const brand = await check('brand create', () => call('/api/v1/master-data/f2/brands', { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2BR-${Date.now()}`, name: 'F2 Smoke Brand' }) }));
 const brandId = brand.brand.id;
-const classification = await check('classification create', () => call('/api/v1/master-data/f2/classifications', { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2CL-${Date.now()}`, name: 'F2 Smoke Classification', type: 'smoke' }) }));
+await check('classification create', () => call('/api/v1/master-data/f2/classifications', { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2CL-${Date.now()}`, name: 'F2 Smoke Classification', type: 'smoke' }) }));
 
 const warehouse = await check('warehouse list', () => call('/api/v1/master-data/warehouses?limit=1&offset=0', { headers: auth() }));
 if (!warehouse.items?.[0]?.id) throw new Error('No active warehouse available for hierarchy smoke');
@@ -54,7 +56,7 @@ if (badParent.response.status !== 422) throw new Error(`expected hierarchy rejec
 
 const party = await check('party create', () => call('/api/v1/master-data/parties', { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2P-${Date.now()}`, kind: 'company', roles: ['customer'], name: 'F2 Smoke Party', active: true }) }));
 const partyId = party.party.id;
-await check('address create', () => call(`/api/v1/master-data/parties/${partyId}/addresses`, { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2ADDR-${Date.now()}`, type: 'commercial', postalCode: '01000-000', street: 'F2 Smoke Street', number: '1', district: 'Centro', city: 'São Paulo', state: 'SP', country: 'BR' }) }));
+await check('address create', () => call(`/api/v1/master-data/parties/${partyId}/addresses`, { method: 'POST', headers: auth(), body: JSON.stringify({ code: `F2ADDR-${Date.now()}`, type: 'commercial', postalCode: '01000-000', street: 'F2 Smoke Street', number: '1', district: 'Centro', city: 'Sao Paulo', state: 'SP', country: 'BR' }) }));
 await check('contact create', () => call('/api/v1/master-data/f2/contacts', { method: 'POST', headers: auth(), body: JSON.stringify({ partyId, name: 'F2 Smoke Contact', email: 'f2-smoke@example.invalid' }) }));
 
 const relationship = await check('relationship create', () => call('/api/v1/master-data/f2/relationships', { method: 'POST', headers: auth(), body: JSON.stringify({ sourceType: 'category', sourceId: categoryId, relation: 'related-to', targetType: 'brand', targetId: brandId }) }));
@@ -70,16 +72,12 @@ await check('attachment download', async () => { const { response, body } = awai
 
 const search = await check('search', () => call('/api/v1/master-data/f2/search?q=F2', { headers: auth() }));
 if (!search.results?.categories || !search.results?.parties || !search.results?.locations || !search.results?.products) throw new Error('search contract incomplete');
-
 await check('integrity', async () => { const x = await call('/api/v1/master-data/f2/integrity', { headers: auth() }); if (x.healthy !== true || !Array.isArray(x.issues)) throw new Error(`integrity reported issues: ${JSON.stringify(x.issues)}`); });
 await check('category export', async () => { const x = await call('/api/v1/master-data/f2/export/categories', { headers: auth() }); if (!Array.isArray(x.records) || !x.records.some((record) => record.id === categoryId)) throw new Error('export contract invalid'); });
 
-const importParentId = crypto.randomUUID();
-const importChildId = crypto.randomUUID();
-await check('dependency-aware category import', async () => {
-  const x = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', headers: auth(), body: JSON.stringify([{ id: importChildId, code: `F2IMP-C-${Date.now()}`, name: 'F2 Imported Child', parentId: importParentId }, { id: importParentId, code: `F2IMP-P-${Date.now()}`, name: 'F2 Imported Parent' }]) });
-  if (x.inserted !== 2 || x.failed !== 0) throw new Error(`import failed: ${JSON.stringify(x)}`);
-});
+const importParentId = randomUUID();
+const importChildId = randomUUID();
+await check('dependency-aware category import', async () => { const x = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', headers: auth(), body: JSON.stringify([{ id: importChildId, code: `F2IMP-C-${Date.now()}`, name: 'F2 Imported Child', parentId: importParentId }, { id: importParentId, code: `F2IMP-P-${Date.now()}`, name: 'F2 Imported Parent' }]) }); if (x.inserted !== 2 || x.failed !== 0) throw new Error(`import failed: ${JSON.stringify(x)}`); });
 
 await check('audit evidence', async () => { const x = await call('/api/v1/core/audit?limit=200&offset=0', { headers: auth() }); if (!x.items?.some((item) => String(item.action).includes('master-data.category.create'))) throw new Error('F2 category mutation missing from audit'); });
 await check('attachment delete lifecycle', async () => { const { response } = await raw(`/api/v1/master-data/f2/attachments/${attachmentId}/file`, { method: 'DELETE', headers: auth() }); if (response.status !== 204) throw new Error(`expected 204, got ${response.status}`); });
