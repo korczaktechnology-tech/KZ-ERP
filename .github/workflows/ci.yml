@@ -14,12 +14,11 @@ jobs:
     name: API check, test and build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/api/package.json
+          node-version: 24
+          package-manager-cache: false
       - name: Install dependencies
         working-directory: apps/api
         run: npm install --no-audit --no-fund --prefer-offline
@@ -36,12 +35,11 @@ jobs:
     name: Desktop type check and build
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/desktop/package.json
+          node-version: 24
+          package-manager-cache: false
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm install --no-audit --no-fund --prefer-offline
@@ -53,12 +51,11 @@ jobs:
     runs-on: ubuntu-22.04
     needs: [api, desktop]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: apps/desktop/package.json
+          node-version: 24
+          package-manager-cache: false
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Linux dependencies
         run: |
@@ -88,7 +85,7 @@ jobs:
     name: MongoDB configuration validation
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify MongoDB is the only application database configuration
         run: |
           set -euo pipefail
