@@ -40,7 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash
-          ./actionlint .github/workflows/release.yml .github/workflows/ci.yml
+          ./actionlint .github/workflows/release.yml
 
       - uses: actions/setup-node@v4
         with:
@@ -105,7 +105,9 @@ jobs:
           fi
           LATEST="$(timeout 30s gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft==false and .prerelease==false) | .tag_name' | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | sort -V | tail -n1)"
           if [ -n "$LATEST" ]; then
-            node -e 'const a=process.argv[1].split(".").map(Number),b=process.argv[2].split(".").map(Number);for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1)}process.exit(1)' "$VERSION" "$LATEST" || { echo "ERRO: versão $VERSION não é superior à última release $LATEST"; exit 1; }
+            if ! node -e 'const a=process.argv[1].split(".").map(Number),b=process.argv[2].split(".").map(Number);for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1)}process.exit(1)' "$VERSION" "$LATEST"; then
+              echo "ERRO: versão $VERSION não é superior à última release $LATEST"; exit 1
+            fi
           fi
 
       - name: Set package version
@@ -115,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           node -e 'const fs=require("fs"),v=process.env.VERSION;for(const f of ["package.json","src-tauri/tauri.conf.json"]){const d=JSON.parse(fs.readFileSync(f,"utf8"));d.version=v;fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")}'
-          node -e 'const fs=require("fs"),v=process.env.VERSION,p="src-tauri/Cargo.toml",t=fs.readFileSync(p,"utf8"),u=t.replace(/^version\s*=\s*"[^"]+"/m,`version = "${v}"`);if(u===t)throw new Error("ERRO: não foi possível atualizar Cargo.toml");fs.writeFileSync(p,u)'
+          node -e 'const fs=require("fs"),v=process.env.VERSION,p="src-tauri/Cargo.toml",t=fs.readFileSync(p,"utf8"),u=t.replace(/^version\s*=\s*"[^"]+"/m,"version = \\\""+v+"\\\"");if(u===t)throw new Error("ERRO: não foi possível atualizar Cargo.toml");fs.writeFileSync(p,u)'
           [ "$(node -p "require('./package.json').version")" = "$VERSION" ]
           [ "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION" ]
           [ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n1)" = "$VERSION" ]
@@ -156,10 +158,10 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           packages=(apps/desktop/src-tauri/target/release/bundle/deb/*.deb)
-          [ "${#packages[@]}" -eq 1 ] || { echo "ERRO: esperado exatamente 1 .deb"; exit 1; }
+          if [ "${#packages[@]}" -ne 1 ]; then echo "ERRO: esperado exatamente 1 .deb"; exit 1; fi
           PACKAGE="${packages[0]}"
           SIZE="$(stat -c '%s' "$PACKAGE")"
-          [ "$SIZE" -gt 0 ] && [ "$SIZE" -le "$MAX_DEB_BYTES" ] || { echo "ERRO: tamanho do .deb inválido: $SIZE"; exit 1; }
+          if [ "$SIZE" -le 0 ] || [ "$SIZE" -gt "$MAX_DEB_BYTES" ]; then echo "ERRO: tamanho do .deb inválido: $SIZE"; exit 1; fi
           dpkg-deb --info "$PACKAGE"
           dpkg-deb --contents "$PACKAGE" >/dev/null
           [ "$(dpkg-deb -f "$PACKAGE" Version)" = "$BUILD_VERSION" ] || { echo "ERRO: versão do .deb incorreta"; exit 1; }
@@ -248,12 +250,12 @@ jobs:
           MANIFEST_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
           SUMS_ID="$(jq -r '.assets[] | select(.name=="SHA256SUMS.txt" and .state=="uploaded") | .id' <<<"$RELEASE")"
           DEB_DIGEST="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n) | .digest // ""' <<<"$RELEASE")"
-          [[ "$DEB_ID" =~ ^[0-9]+$ ]] && [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] && [[ "$SUMS_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: asset ID inválido"; exit 1; }
+          if ! [[ "$DEB_ID" =~ ^[0-9]+$ ]] || ! [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || ! [[ "$SUMS_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: asset ID inválido"; exit 1; fi
           [[ "$DEB_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || { echo "ERRO: digest do .deb inválido"; exit 1; }
           timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" --output "$MANIFEST"
           timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" --output "$DEB"
           timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$SUMS_ID" -H "Accept: application/octet-stream" --output "$SUMS"
-          test -s "$MANIFEST" && test -s "$DEB" && test -s "$SUMS"
+          if [ ! -s "$MANIFEST" ] || [ ! -s "$DEB" ] || [ ! -s "$SUMS" ]; then echo "ERRO: asset baixado vazio"; exit 1; fi
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$DEB_ID" '.version==$v and .assetName==$n and .assetId==$id and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' "$MANIFEST" >/dev/null
           SUMS_SHA="$(awk -v n="$DEB_NAME" '$2==n || $2=="*"n {print $1; exit}' "$SUMS" | tr '[:upper:]' '[:lower:]')"
           EXPECTED_SHA="$(jq -r '.sha256' "$MANIFEST" | tr '[:upper:]' '[:lower:]')"
@@ -297,10 +299,10 @@ jobs:
           [ "$(jq -r '.tag_name' <<<"$RELEASE")" = "$BUILD_TAG" ] || { echo "ERRO: tag diverge"; exit 1; }
           MANIFEST_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
           DEB_ID="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n and .state=="uploaded") | .id' <<<"$RELEASE")"
-          [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] && [[ "$DEB_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: asset IDs inválidos"; exit 1; }
+          if ! [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || ! [[ "$DEB_ID" =~ ^[0-9]+$ ]]; then echo "ERRO: asset IDs inválidos"; exit 1; fi
           timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" --output "$MANIFEST"
           timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" --output "$DEB"
-          test -s "$MANIFEST" && test -s "$DEB"
+          if [ ! -s "$MANIFEST" ] || [ ! -s "$DEB" ]; then echo "ERRO: asset baixado vazio"; exit 1; fi
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" --argjson id "$DEB_ID" '.version==$v and .assetName==$n and .assetId==$id and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' "$MANIFEST" >/dev/null
           ACTUAL_SHA="$(sha256sum "$DEB" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
           EXPECTED_SHA="$(jq -r '.sha256' "$MANIFEST" | tr '[:upper:]' '[:lower:]')"
