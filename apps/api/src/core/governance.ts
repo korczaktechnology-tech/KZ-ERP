@@ -34,6 +34,17 @@ async function audit(db: Db, companyId: string, actorUserId: string, action: str
 }
 async function ensureCollection(db: Db, name: string): Promise<void> { const names = new Set((await db.listCollections({}, { nameOnly: true }).toArray()).map(x => x.name)); if (!names.has(name)) await db.createCollection(name); }
 
+async function ensureIndex(db: Db, collectionName: string, key: Record<string, 1 | -1>, options: Record<string, unknown>): Promise<void> {
+  const collection = db.collection(collectionName);
+  const desiredKey = JSON.stringify(key);
+  const existing = await collection.listIndexes().toArray();
+  const sameKey = existing.find(index => JSON.stringify(index.key) === desiredKey);
+  if (sameKey && sameKey.name !== options.name) {
+    await collection.dropIndex(sameKey.name as string);
+  }
+  await collection.createIndex(key, options);
+}
+
 export async function ensureGovernanceCollections(db: Db): Promise<void> {
   for (const n of ['permissions','role_permissions','access_scopes','access_policies','org_units','departments','cost_centers','teams','core_configurations']) await ensureCollection(db,n);
   const permissions = db.collection<PermissionDoc>('permissions');
@@ -42,7 +53,7 @@ export async function ensureGovernanceCollections(db: Db): Promise<void> {
   for (const key of keys) await permissions.updateOne({ key }, { $setOnInsert:{ _id:id(), key, name:key, createdAt:now(), updatedAt:now() } }, { upsert:true });
   await permissions.createIndex({ key:1 }, { unique:true, name:'permissions_key_unique' });
   await db.collection('role_permissions').createIndex({ companyId:1, roleKey:1, permissionKey:1 }, { unique:true, name:'role_permissions_unique' });
-  await db.collection('access_scopes').createIndex({ companyId:1,userId:1,module:1,active:1 }, { name:'access_scopes_lookup' });
+  await ensureIndex(db, 'access_scopes', { companyId:1,userId:1,module:1,active:1 }, { name:'access_scopes_lookup' });
   await db.collection('access_policies').createIndex({ companyId:1,permission:1,resource:1,active:1 }, { name:'access_policies_lookup' });
   await db.collection('core_configurations').createIndex({ companyId:1,scope:1,scopeId:1,module:1,key:1 }, { unique:true, name:'core_config_unique' });
   for (const name of ['org_units','departments','cost_centers','teams']) await db.collection(name).createIndex({ companyId:1,createdAt:-1 }, { name:`${name}_company_created` });
@@ -107,7 +118,7 @@ export function governanceRouter(db: Db): Router {
   router.get('/core/policies',async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}ok(res,{policies:await db.collection<PolicyDoc>('access_policies').find({companyId:a.companyId}).sort({createdAt:-1}).toArray()});}catch(e){next(e);}});
   router.post('/core/policies',async(req,res,next)=>{try{const a=actor(res);if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;}const input=policySchema.parse(req.body);const t=now();const doc={_id:id(),companyId:a.companyId,...input,createdAt:t,updatedAt:t};await db.collection<PolicyDoc>('access_policies').insertOne(doc);await audit(db,a.companyId,a.id,'core.policy.create','policy',doc._id,{permission:doc.permission,effect:doc.effect});ok(res,{policy:doc},201);}catch(e){next(e);}});
   router.patch('/core/policies/:id',async(req,res,next)=>{try{const a=actor(res);if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;}const input=policySchema.partial().parse(req.body);const result=await db.collection<PolicyDoc>('access_policies').updateOne({_id:req.params.id,companyId:a.companyId},{$set:{...input,updatedAt:now()}});if(result.matchedCount!==1){fail(res,404,'NOT_FOUND');return;}await audit(db,a.companyId,a.id,'core.policy.update','policy',req.params.id,{changed:Object.keys(input)});ok(res,{policy:await db.collection<PolicyDoc>('access_policies').findOne({_id:req.params.id,companyId:a.companyId})});}catch(e){next(e);}});
-  router.get('/core/configurations',async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}const p=parsePagination(req.query);const c=db.collection<ConfigDoc>('core_configurations');const [items,total]=await Promise.all([c.find({companyId:a.companyId}).sort({key:1}).skip(p.offset).limit(p.limit).toArray(),c.countDocuments({companyId:a.companyId})]);paginated(res,items,total,p);}catch(e){next(e);}});
+  router.get('/core/configurations',async(req,res,next)=>{try{const a=actor(res);if(!canRead(a)){fail(res,403,'FORBIDDEN');return;}const p=parsePagination(req.query);const c=db.collection<ConfigDoc>('core_configurations');const [items,total]=await Promise.all([c.find({companyId:a.companyId}).sort({key:1}).skip(p.offset).limit(p.limit).toArray(),c.countDocuments(filter)]);paginated(res,items,total,p);}catch(e){next(e);}});
   router.put('/core/configurations',async(req,res,next)=>{try{const a=actor(res);if(!canWrite(a)){fail(res,403,'FORBIDDEN');return;}const input=configSchema.parse(req.body);if(input.scope!=='company'&&!input.scopeId){fail(res,400,'VALIDATION_ERROR','scopeId is required for this configuration scope');return;}const t=now();await db.collection<ConfigDoc>('core_configurations').updateOne({companyId:a.companyId,scope:input.scope,scopeId:input.scopeId,module:input.module,key:input.key},{$set:{...input,companyId:a.companyId,updatedAt:t},$setOnInsert:{_id:id(),createdAt:t}},{upsert:true});const doc=await db.collection<ConfigDoc>('core_configurations').findOne({companyId:a.companyId,scope:input.scope,scopeId:input.scopeId,module:input.module,key:input.key});await audit(db,a.companyId,a.id,'core.configuration.upsert','configuration',doc?._id,{scope:input.scope,scopeId:input.scopeId,module:input.module,key:input.key});ok(res,{configuration:doc});}catch(e){next(e);}});
   return router;
 }
