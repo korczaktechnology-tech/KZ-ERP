@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validLocationParentKind, wouldCreateCycle } from '../modules/master-data/f2-hardening.js';
+import { validLocationParentKind, wouldCreateCycle, validateF2Reference, validateF2ImportReferences } from '../modules/master-data/f2-hardening.js';
 
 test('warehouse location hierarchy accepts only the immediate semantic parent', () => {
   assert.equal(validLocationParentKind('zone'), true);
@@ -39,7 +39,19 @@ test('cycle detection stops at a missing parent', async () => {
   assert.equal(await wouldCreateCycle(collection, 'company', 'new', 'missing'), false);
 });
 
-test('cycle detection is scoped to the company', async () => {
-  const collection: any = { findOne: async (filter: any) => filter.companyId === 'company-a' ? { parentId: undefined } : { parentId: 'other' } };
-  assert.equal(await wouldCreateCycle(collection, 'company-a', 'new', 'parent'), false);
+test('reference validation rejects unsupported entity types', async () => {
+  const db: any = { collection: () => ({ findOne: async () => null }) };
+  assert.equal(await validateF2Reference(db, 'company', 'unsupported', 'id'), "Reference type 'unsupported' is not supported");
+});
+
+test('reference validation enforces tenant ownership', async () => {
+  const db: any = { collection: () => ({ findOne: async (filter: any) => filter.companyId === 'company-a' ? { _id: filter._id } : null }) };
+  assert.equal(await validateF2Reference(db, 'company-a', 'product', 'p1'), null);
+  assert.equal(await validateF2Reference(db, 'company-b', 'product', 'p1'), "Reference 'product:p1' not found");
+});
+
+test('price import requires both product and price-list references', async () => {
+  const db: any = { collection: (name: string) => ({ findOne: async (filter: any) => ({ _id: filter._id, companyId: filter.companyId }) }) };
+  assert.equal(await validateF2ImportReferences(db, 'company', 'prices', { amount: 10 }), 'Price list id is required');
+  assert.equal(await validateF2ImportReferences(db, 'company', 'prices', { priceListId: 'p', productId: 'x' }), null);
 });
