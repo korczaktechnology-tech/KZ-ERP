@@ -93,3 +93,21 @@ jobs:
             echo "ERRO: configuração PostgreSQL detectada"; exit 1
           fi
           grep -Rni 'MONGODB_URI' apps/api infra render.yaml docker-compose.yml
+  f2-e2e:
+    name: F2 operational API smoke
+    if: ${{ secrets.KZ_ERP_E2E_EMAIL != '' && secrets.KZ_ERP_E2E_PASSWORD != '' }}
+    runs-on: ubuntu-22.04
+    needs: [api]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Run F2 smoke
+        env:
+          KZ_ERP_API_URL: https://kz-erp.onrender.com
+          KZ_ERP_E2E_EMAIL: ${{ secrets.KZ_ERP_E2E_EMAIL }}
+          KZ_ERP_E2E_PASSWORD: ${{ secrets.KZ_ERP_E2E_PASSWORD }}
+          KZ_ERP_E2E_COMPANY_SLUG: ${{ secrets.KZ_ERP_E2E_COMPANY_SLUG }}
+        run: node scripts/f2-full-smoke.mjs
