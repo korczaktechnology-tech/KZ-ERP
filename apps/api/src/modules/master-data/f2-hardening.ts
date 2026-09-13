@@ -1,61 +1,10 @@
 import type { Db, Collection } from 'mongodb';
-
-export const F2_ENTITY_COLLECTIONS = {
-  product: 'products', category: 'product_categories', brand: 'product_brands', party: 'parties', contact: 'party_contacts', address: 'addresses', warehouse: 'warehouses', location: 'warehouse_locations', classification: 'classifications', unit: 'units', price_list: 'price_lists', price: 'prices'
-} as const;
-
-export type F2EntityType = keyof typeof F2_ENTITY_COLLECTIONS;
-
-export function f2EntityCollection(db: Db, type: string): Collection<any> | null {
-  const name = F2_ENTITY_COLLECTIONS[type as F2EntityType];
-  return name ? db.collection(name) : null;
-}
-
-export async function f2Exists(db: Db, companyId: string, type: string, id: string): Promise<boolean> {
-  const c = f2EntityCollection(db, type);
-  if (!c) return false;
-  return Boolean(await c.findOne({ _id: id, companyId }, { projection: { _id: 1 } }));
-}
-
-export async function validateF2Reference(db: Db, companyId: string, type: string, id: string, label = 'Reference'): Promise<string | null> {
-  if (!F2_ENTITY_COLLECTIONS[type as F2EntityType]) return `${label} type '${type}' is not supported`;
-  if (!(await f2Exists(db, companyId, type, id))) return `${label} '${type}:${id}' not found`;
-  return null;
-}
-
-export async function wouldCreateCycle(collection: Collection<any>, companyId: string, id: string, parentId: string | undefined, maxDepth = 1000): Promise<boolean> {
-  if (!parentId) return false;
-  if (id === parentId) return true;
-  const seen = new Set<string>([id]);
-  let current: string | undefined = parentId;
-  for (let depth = 0; current && depth < maxDepth; depth++) {
-    if (seen.has(current)) return true;
-    seen.add(current);
-    const parent = await collection.findOne({ _id: current, companyId }, { projection: { parentId: 1 } });
-    if (!parent) return false;
-    current = parent.parentId;
-  }
-  return Boolean(current);
-}
-
-const LOCATION_PARENT: Record<string, string | null> = { zone: null, aisle: 'zone', rack: 'aisle', shelf: 'rack', bin: 'shelf' };
-export function validLocationParentKind(childKind: string, parentKind?: string): boolean {
-  const required = LOCATION_PARENT[childKind];
-  return required === null ? parentKind === undefined : parentKind === required;
-}
-
-export async function validateF2ImportReferences(db: Db, companyId: string, entity: string, input: Record<string, unknown>): Promise<string | null> {
-  const checks: Array<[string, string | undefined, string]> = [];
-  if (entity === 'addresses') checks.push(['party', typeof input.partyId === 'string' ? input.partyId : undefined, 'Party']);
-  if (entity === 'prices') {
-    checks.push(['price_list', typeof input.priceListId === 'string' ? input.priceListId : undefined, 'Price list']);
-    checks.push(['product', typeof input.productId === 'string' ? input.productId : undefined, 'Product']);
-  }
-  if (entity === 'warehouses') return null;
-  for (const [type, id, label] of checks) {
-    if (!id) return `${label} id is required`;
-    const error = await validateF2Reference(db, companyId, type, id, label);
-    if (error) return error;
-  }
-  return null;
-}
+export const F2_ENTITY_COLLECTIONS={product:'products',category:'product_categories',brand:'product_brands',party:'parties',contact:'party_contacts',address:'addresses',warehouse:'warehouses',location:'warehouse_locations',classification:'classifications',unit:'units',price_list:'price_lists',price:'prices'} as const;
+export type F2EntityType=keyof typeof F2_ENTITY_COLLECTIONS;
+export function f2EntityCollection(db:Db,type:string):Collection<any>|null{const name=F2_ENTITY_COLLECTIONS[type as F2EntityType];return name?db.collection(name):null}
+export async function f2Exists(db:Db,companyId:string,type:string,id:string){const c=f2EntityCollection(db,type);return c?Boolean(await c.findOne({_id:id,companyId},{projection:{_id:1}})):false}
+export async function validateF2Reference(db:Db,companyId:string,type:string,id:string,label='Reference'):Promise<string|null>{if(!F2_ENTITY_COLLECTIONS[type as F2EntityType])return `${label} type '${type}' is not supported`;if(!(await f2Exists(db,companyId,type,id)))return `${label} '${type}:${id}' not found`;return null}
+export async function wouldCreateCycle(collection:Collection<any>,companyId:string,id:string,parentId:string|undefined,maxDepth=1000):Promise<boolean>{if(!parentId)return false;if(id===parentId)return true;const seen=new Set<string>([id]);let current:string|undefined=parentId;for(let depth=0;current&&depth<maxDepth;depth++){if(seen.has(current))return true;seen.add(current);const parent:any=await collection.findOne({_id:current,companyId},{projection:{parentId:1}});if(!parent)return false;current=typeof parent.parentId==='string'?parent.parentId:undefined}return Boolean(current)}
+const LOCATION_PARENT:Record<string,string|null>={zone:null,aisle:'zone',rack:'aisle',shelf:'rack',bin:'shelf'};
+export function validLocationParentKind(childKind:string,parentKind?:string){const required=LOCATION_PARENT[childKind];return required===null?parentKind===undefined:parentKind===required}
+export async function validateF2ImportReferences(db:Db,companyId:string,entity:string,input:Record<string,unknown>):Promise<string|null>{const checks:Array<[string,string|undefined,string]>=[];if(entity==='addresses')checks.push(['party',typeof input.partyId==='string'?input.partyId:undefined,'Party']);if(entity==='prices'){checks.push(['price_list',typeof input.priceListId==='string'?input.priceListId:undefined,'Price list']);checks.push(['product',typeof input.productId==='string'?input.productId:undefined,'Product'])}for(const[type,id,label]of checks){if(!id)return `${label} id is required`;const e=await validateF2Reference(db,companyId,type,id,label);if(e)return e}return null}
