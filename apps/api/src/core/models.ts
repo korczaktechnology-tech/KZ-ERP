@@ -3,6 +3,10 @@ import type { Document, Decimal128 } from 'mongodb';
 export type Id = string;
 export type BaseDocument = { _id: Id; companyId: Id; createdAt: Date; updatedAt: Date };
 export type Product = BaseDocument & { sku: string; name: string; description?: string; active: boolean; unit: string; price: Decimal128 };
+/** @deprecated Compatibility DTO. Persist new customer records in parties. */
+export type Customer = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
+/** @deprecated Compatibility DTO. Persist new supplier records in parties. */
+export type Supplier = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
 export type Warehouse = BaseDocument & { code: string; name: string; active: boolean };
 export type StockBalance = BaseDocument & { warehouseId: Id; productId: Id; quantity: Decimal128; reservedQuantity: Decimal128; minimumQuantity: Decimal128 };
 export type StockMovement = { _id?: Id; companyId: Id; type: 'receipt' | 'issue' | 'adjustment' | 'transfer'; productId: Id; warehouseId: Id; destinationWarehouseId?: Id; quantity: Decimal128; direction?: 'increase' | 'decrease'; reason?: string; reference?: string; idempotencyKey?: string; operationHash?: string; actorUserId: Id; createdAt: Date };
