@@ -1,8 +1,6 @@
 name: Release Linux
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -20,10 +18,8 @@ env:
 
 jobs:
   build-linux:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-22.04
     steps:
-      # Release pipeline: draft -> signed assets -> validation -> publish.
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -182,11 +178,11 @@ NODE
           RELEASE_ID="$(jq -r '.id' <<<"$RELEASE_JSON")"
           UPLOAD_URL="$(jq -r '.upload_url' <<<"$RELEASE_JSON" | sed 's/{?name,label}//')"
           [[ "$RELEASE_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: release ID inválido: $RELEASE_ID"; exit 1; }
-          [ -n "$UPLOAD_URL" ] || { echo "ERRO: upload_url ausente"; exit 1; }
+          [[ "$UPLOAD_URL" == https://uploads.github.com/repos/*/releases/*/assets ]] || { echo "ERRO: upload_url inválida"; exit 1; }
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
           echo "RELEASE_UPLOAD_URL=$UPLOAD_URL" >> "$GITHUB_ENV"
-          curl --fail-with-body -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/octet-stream" --data-binary @"release-artifact/$DEB_NAME" "$UPLOAD_URL?name=$DEB_NAME" >/dev/null
-          curl --fail-with-body -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: text/plain" --data-binary @release-artifact/SHA256SUMS.txt "$UPLOAD_URL?name=SHA256SUMS.txt" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/octet-stream" --data-binary @"release-artifact/$DEB_NAME" "$UPLOAD_URL?name=$DEB_NAME" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: text/plain" --data-binary @release-artifact/SHA256SUMS.txt "$UPLOAD_URL?name=SHA256SUMS.txt" >/dev/null
 
       - name: Create signed update manifest
         env:
@@ -204,7 +200,7 @@ NODE
           SIGNATURE="$(base64 -w0 release-artifact/signature.bin)"
           printf '{"version":"%s","assetId":%s,"assetName":"%s","sha256":"%s","signature":"%s"}\n' "$BUILD_VERSION" "$ASSET_ID" "$DEB_NAME" "$SHA256" "$SIGNATURE" > release-artifact/UPDATE-MANIFEST.json
           rm -f /tmp/kz-update-signing-key.pem release-artifact/update-signing-payload.txt release-artifact/signature.bin
-          curl --fail-with-body -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/json" --data-binary @release-artifact/UPDATE-MANIFEST.json "$RELEASE_UPLOAD_URL?name=UPDATE-MANIFEST.json" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/json" --data-binary @release-artifact/UPDATE-MANIFEST.json "$RELEASE_UPLOAD_URL?name=UPDATE-MANIFEST.json" >/dev/null
 
       - name: Validate draft release
         env:
@@ -234,6 +230,8 @@ NODE
           [ "$(jq -r '.draft' <<<"$RELEASE")" = "false" ] || { echo "ERRO: release ainda draft"; exit 1; }
           MANIFEST_URL="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json") | .browser_download_url' <<<"$RELEASE")"
           DEB_URL="$(jq -r '.assets[] | select(.name=="'"$DEB_NAME"'") | .browser_download_url' <<<"$RELEASE")"
+          [ -n "$MANIFEST_URL" ] && [ "$MANIFEST_URL" != "null" ] || { echo "ERRO: URL do manifesto ausente"; exit 1; }
+          [ -n "$DEB_URL" ] && [ "$DEB_URL" != "null" ] || { echo "ERRO: URL do .deb ausente"; exit 1; }
           curl --fail -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$MANIFEST_URL" -o /tmp/UPDATE-MANIFEST.json
           curl --fail -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$DEB_URL" -o /tmp/KORCZAK-ERP-linux-amd64.deb
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" '.version==$v and .assetName==$n and (.assetId|type=="number") and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' /tmp/UPDATE-MANIFEST.json >/dev/null
