@@ -14,9 +14,9 @@ describe('F1 governance',()=>{
     assert.equal(await hasPersistentPermission(db([{effect:'deny',companyId:'c1',roleKey:'manager',permissionKey:'sales:write'}]),user,'sales:write'),false);
   });
   it('does not let ABAC policies elevate a role without permission',async()=>{
-    const policies=[{companyId:'c1',active:true,permission:'sales:read',effect:'allow',conditions:{}}];
-    assert.equal(await authorizeABAC(db([],policies),user,'sales:read'),false);
-    assert.equal(await authorizeABAC(db([],policies),user,'finance:write'),false);
+    const policies=[{companyId:'c1',active:true,permission:'payroll:write',effect:'allow',conditions:{}}];
+    assert.equal(await authorizeABAC(db([],policies),user,'payroll:write'),false);
+    assert.equal(await authorizeABAC(db([],policies),user,'finance:admin'),false);
   });
   it('applies a matching ABAC deny policy',async()=>{
     const roles=[{companyId:'__SYSTEM__',roleKey:'manager',permissionKey:'sales:write',effect:'allow'}];
