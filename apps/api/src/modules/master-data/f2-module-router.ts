@@ -17,4 +17,4 @@ export function f2ModuleRouter(db: Db): Router {
   return router;
 }
 
-// F2 route order is intentional: guards and data health precede legacy CRUD, import and IO.
+// Route order is part of the F2 contract: guards/data health first, then CRUD, import and IO.
