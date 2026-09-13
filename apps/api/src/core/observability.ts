@@ -18,7 +18,7 @@ export function observabilityMiddleware(req: Request, res: Response, next: NextF
   res.setHeader('X-Request-Id', requestId);
   res.on('finish', () => {
     const elapsed = Number(process.hrtime.bigint() - started) / 1_000_000;
-    const route = req.route?.path ? `${req.baseUrl}${req.route.path}` : req.path;
+    const route = req.route?.path ? `${req.baseUrl}${req.route.path}` : (res.statusCode === 404 ? '__not_found__' : req.baseUrl || '__unmatched__');
     const metricKey = key(req.method, route, res.statusCode);
     counters.set(metricKey, (counters.get(metricKey) ?? 0) + 1);
     const duration = durations.get(route) ?? { count: 0, sum: 0 };
