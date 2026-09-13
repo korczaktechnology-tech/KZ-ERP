@@ -15,7 +15,7 @@ describe('F1 governance',()=>{
   });
   it('does not let ABAC policies elevate a role without permission',async()=>{
     const policies=[{companyId:'c1',active:true,permission:'sales:read',effect:'allow',conditions:{}}];
-    assert.equal(await authorizeABAC(db([],policies),user,'sales:read'),true);
+    assert.equal(await authorizeABAC(db([],policies),user,'sales:read'),false);
     assert.equal(await authorizeABAC(db([],policies),user,'finance:write'),false);
   });
   it('applies a matching ABAC deny policy',async()=>{
