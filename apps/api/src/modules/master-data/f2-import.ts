@@ -1,7 +1,7 @@
-import type { Collection, Db } from 'mongodb';
+import type { Db } from 'mongodb';
 import { randomUUID } from 'node:crypto';
 import type { ZodType } from 'zod';
-import { f2EntityCollection, F2_ENTITY_COLLECTIONS, validLocationParentKind } from './f2-hardening.js';
+import { F2_ENTITY_COLLECTIONS, f2EntityCollection, validLocationParentKind } from './f2-hardening.js';
 
 export type F2ImportResult = {
   inserted: number;
@@ -10,7 +10,6 @@ export type F2ImportResult = {
 };
 
 type ImportRecord = Record<string, unknown> & { id?: string };
-
 type ImportOptions = {
   db: Db;
   companyId: string;
@@ -31,21 +30,17 @@ function asId(value: unknown): string | undefined {
 }
 
 function batchId(record: ImportRecord): string {
-  const supplied = asId(record.id);
-  return supplied ?? randomUUID();
+  return asId(record.id) ?? randomUUID();
 }
 
 async function existingIds(db: Db, companyId: string, type: string): Promise<Set<string>> {
   const collection = f2EntityCollection(db, type);
   if (!collection) return new Set();
   const rows = await collection.find({ companyId }, { projection: { _id: 1 } }).toArray();
-  return new Set(rows.map((row) => String(row._id)));
+  return new Set(rows.map((row: { _id: unknown }) => String(row._id)));
 }
 
-function detectParentCycle(
-  parentById: Map<string, string | undefined>,
-  id: string,
-): boolean {
+function detectParentCycle(parentById: Map<string, string | undefined>, id: string): boolean {
   const seen = new Set<string>([id]);
   let current = parentById.get(id);
   while (current) {
@@ -54,6 +49,25 @@ function detectParentCycle(
     current = parentById.get(current);
   }
   return false;
+}
+
+function logicalType(entity: string): string {
+  if (entity === 'categories') return 'category';
+  if (entity === 'locations') return 'location';
+  return entity === 'classifications' ? 'classification' : entity;
+}
+
+async function referenceExists(
+  db: Db,
+  companyId: string,
+  type: string,
+  id: string,
+  batchIds: Set<string>,
+  sameEntity: boolean,
+): Promise<boolean> {
+  if (sameEntity && batchIds.has(id)) return true;
+  const collection = f2EntityCollection(db, type);
+  return Boolean(collection && await collection.findOne({ _id: id, companyId }, { projection: { _id: 1 } }));
 }
 
 async function validateRecord(
@@ -67,59 +81,43 @@ async function validateRecord(
   warehouseById: Map<string, string>,
 ): Promise<string | null> {
   for (const [field, type, label] of REF_FIELDS[entity] ?? []) {
-    const id = asId(record[field]);
-    if (!id) return `${label} id is required`;
-    const sameBatch = type === entity && batchIds.has(id);
-    if (!sameBatch) {
-      const collection = f2EntityCollection(db, type);
-      if (!collection || !(await collection.findOne({ _id: id, companyId }, { projection: { _id: 1 } }))) {
-        return `${label} '${type}:${id}' not found`;
-      }
-    }
-  }
-
-  if (entity === 'categories' || entity === 'classifications' || entity === 'locations') {
-    const parentId = asId(record.parentId);
-    if (!parentId) return entity === 'locations' && !record.warehouseId ? 'Warehouse id is required' : null;
-    const parentExists = batchIds.has(parentId) || Boolean(
-      await (f2EntityCollection(db, entity === 'categories' ? 'category' : entity === 'classifications') ??
-        db.collection(F2_ENTITY_COLLECTIONS[entity === 'categories' ? 'category' : 'classification'])).findOne(
-        { _id: parentId, companyId },
-        { projection: { _id: 1 } },
-      ),
-    );
-    if (!parentExists) return entity === 'locations' ? 'Location parent not found' : 'Parent not found';
-
-    if (entity === 'locations') {
-      const kind = String(record.kind ?? '');
-      const warehouseId = asId(record.warehouseId);
-      const parentKind = kindById.get(parentId) ?? String((await db.collection('warehouse_locations').findOne({ _id: parentId, companyId }, { projection: { kind: 1 } }))?.kind ?? '');
-      const parentWarehouse = warehouseById.get(parentId) ?? String((await db.collection('warehouse_locations').findOne({ _id: parentId, companyId }, { projection: { warehouseId: 1 } }))?.warehouseId ?? '');
-      if (!warehouseId) return 'Warehouse id is required';
-      if (!validLocationParentKind(kind, parentKind) || parentWarehouse !== warehouseId) return 'Invalid location hierarchy';
+    const refId = asId(record[field]);
+    if (!refId) return `${label} id is required`;
+    if (!(await referenceExists(db, companyId, type, refId, batchIds, type === logicalType(entity)))) {
+      return `${label} '${type}:${refId}' not found`;
     }
   }
 
   if (entity === 'locations') {
     const warehouseId = asId(record.warehouseId);
     if (!warehouseId) return 'Warehouse id is required';
-    const warehouse = await db.collection('warehouses').findOne({ _id: warehouseId, companyId }, { projection: { _id: 1 } });
-    if (!warehouse) return `Warehouse '${warehouseId}' not found`;
+    if (!(await referenceExists(db, companyId, 'warehouse', warehouseId, batchIds, false))) {
+      return `Warehouse '${warehouseId}' not found`;
+    }
   }
 
-  if ((entity === 'categories' || entity === 'classifications' || entity === 'locations') && detectParentCycle(parentById, String(record.id))) {
-    return 'Hierarchy cycle detected';
+  if (entity === 'categories' || entity === 'classifications' || entity === 'locations') {
+    const parentId = asId(record.parentId);
+    if (!parentId) return null;
+    const parentType = logicalType(entity);
+    if (!(await referenceExists(db, companyId, parentType, parentId, batchIds, true))) {
+      return entity === 'locations' ? 'Location parent not found' : 'Parent not found';
+    }
+    if (detectParentCycle(parentById, String(record.id))) return 'Hierarchy cycle detected';
+
+    if (entity === 'locations') {
+      const childKind = String(record.kind ?? '');
+      const childWarehouse = asId(record.warehouseId);
+      const parentKind = kindById.get(parentId) ?? String((await db.collection(F2_ENTITY_COLLECTIONS.location).findOne({ _id: parentId, companyId }, { projection: { kind: 1 } }))?.kind ?? '');
+      const parentWarehouse = warehouseById.get(parentId) ?? String((await db.collection(F2_ENTITY_COLLECTIONS.location).findOne({ _id: parentId, companyId }, { projection: { warehouseId: 1 } }))?.warehouseId ?? '');
+      if (!childWarehouse || !validLocationParentKind(childKind, parentKind) || parentWarehouse !== childWarehouse) return 'Invalid location hierarchy';
+    }
   }
 
   return null;
 }
 
-/**
- * Imports a single F2 entity deterministically. IDs are preserved when supplied,
- * which makes an export -> import round trip lossless and allows same-batch refs.
- * Hierarchy records are retried until their parents exist; unresolved records get
- * deterministic per-index errors instead of depending on input order.
- */
+/** Deterministic, dependency-aware import for one F2 entity. */
 export async function importF2Batch(options: ImportOptions): Promise<F2ImportResult> {
   const { db, companyId, entity, records, schema, collection } = options;
   const parsed: Array<{ index: number; id: string; value: ImportRecord }> = [];
@@ -138,13 +136,13 @@ export async function importF2Batch(options: ImportOptions): Promise<F2ImportRes
     }
   }
 
-  const entityType = entity === 'categories' ? 'category' : entity === 'locations' ? 'location' : entity === 'classifications' ? 'classification' : entity;
-  const existing = await existingIds(db, companyId, entityType);
-  for (const id of seenIds) {
-    if (existing.has(id)) errors.push({ index: parsed.find((x) => x.id === id)?.index ?? -1, error: `Entity '${id}' already exists` });
+  const type = logicalType(entity);
+  const existing = await existingIds(db, companyId, type);
+  for (const row of parsed) {
+    if (existing.has(row.id)) errors.push({ index: row.index, error: `Entity '${row.id}' already exists` });
   }
 
-  const batchIds = new Set(parsed.map((x) => x.id));
+  const batchIds = new Set(parsed.map((row) => row.id));
   const parentById = new Map<string, string | undefined>();
   const kindById = new Map<string, string>();
   const warehouseById = new Map<string, string>();
@@ -156,9 +154,10 @@ export async function importF2Batch(options: ImportOptions): Promise<F2ImportRes
     }
   }
 
-  const pending = parsed.filter((row) => !errors.some((e) => e.index === row.index));
+  const pending = parsed.filter((row) => !errors.some((error) => error.index === row.index));
   const insertedIds = new Set<string>();
   let progress = true;
+
   while (pending.length > 0 && progress) {
     progress = false;
     for (let i = pending.length - 1; i >= 0; i -= 1) {
@@ -167,8 +166,7 @@ export async function importF2Batch(options: ImportOptions): Promise<F2ImportRes
       if (parentId && batchIds.has(parentId) && !insertedIds.has(parentId)) continue;
       const validation = await validateRecord(db, companyId, entity, row.value, batchIds, parentById, kindById, warehouseById);
       if (validation) {
-        if (parentId && batchIds.has(parentId) && !insertedIds.has(parentId) && validation === 'Parent not found') continue;
-        if (parentId && batchIds.has(parentId) && !insertedIds.has(parentId) && validation === 'Location parent not found') continue;
+        if (parentId && batchIds.has(parentId) && !insertedIds.has(parentId) && (validation === 'Parent not found' || validation === 'Location parent not found' || validation === 'Invalid location hierarchy')) continue;
         errors.push({ index: row.index, error: validation });
         pending.splice(i, 1);
         continue;
@@ -182,16 +180,12 @@ export async function importF2Batch(options: ImportOptions): Promise<F2ImportRes
     }
   }
 
-  for (const row of pending) {
-    errors.push({ index: row.index, error: 'Unresolvable dependency or hierarchy cycle' });
-  }
-
+  for (const row of pending) errors.push({ index: row.index, error: 'Unresolvable dependency or hierarchy cycle' });
   errors.sort((a, b) => a.index - b.index);
   return { inserted: insertedIds.size, failed: records.length - insertedIds.size, errors };
 }
 
-export async function assertF2ImportEntity(entity: string): Promise<void> {
-  if (!(entity in F2_ENTITY_COLLECTIONS) && !['categories', 'brands', 'contacts', 'locations', 'classifications', 'attachments', 'relationships'].includes(entity)) {
-    throw new Error(`Unsupported master-data entity '${entity}'`);
-  }
+export function assertF2ImportEntity(entity: string): void {
+  const supported = new Set([...Object.keys(F2_ENTITY_COLLECTIONS), 'categories', 'brands', 'contacts', 'locations', 'classifications', 'attachments', 'relationships']);
+  if (!supported.has(entity)) throw new Error(`Unsupported master-data entity '${entity}'`);
 }
