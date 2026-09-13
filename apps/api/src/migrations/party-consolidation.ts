@@ -33,8 +33,8 @@ try {
       const roles = new Set<string>([...(existing?.roles ?? []), role]);
       const now = new Date();
       const party = {
-        _id: String(doc._id),
-        companyId: String(doc.companyId),
+        _id: doc._id,
+        companyId: doc.companyId,
         code: String(doc.code),
         kind: 'company' as const,
         roles: [...roles],
