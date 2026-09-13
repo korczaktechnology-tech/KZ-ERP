@@ -16,6 +16,9 @@ on:
 permissions:
   contents: write
 
+env:
+  DEB_NAME: KORCZAK-ERP-linux-amd64.deb
+
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
