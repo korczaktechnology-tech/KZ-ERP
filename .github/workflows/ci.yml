@@ -95,19 +95,28 @@ jobs:
           grep -Rni 'MONGODB_URI' apps/api infra render.yaml docker-compose.yml
   f2-e2e:
     name: F2 operational API smoke
-    if: ${{ secrets.KZ_ERP_E2E_EMAIL != '' && secrets.KZ_ERP_E2E_PASSWORD != '' }}
     runs-on: ubuntu-22.04
     needs: [api]
+    env:
+      KZ_ERP_API_URL: https://kz-erp.onrender.com
+      KZ_ERP_E2E_EMAIL: ${{ secrets.KZ_ERP_E2E_EMAIL }}
+      KZ_ERP_E2E_PASSWORD: ${{ secrets.KZ_ERP_E2E_PASSWORD }}
+      KZ_ERP_E2E_COMPANY_SLUG: ${{ secrets.KZ_ERP_E2E_COMPANY_SLUG }}
     steps:
       - uses: actions/checkout@v7
+      - name: Check E2E credentials availability
+        id: creds
+        shell: bash
+        run: |
+          if [[ -n "$KZ_ERP_E2E_EMAIL" && -n "$KZ_ERP_E2E_PASSWORD" ]]; then echo "available=true" >> "$GITHUB_OUTPUT"; else echo "available=false" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/setup-node@v7
+        if: steps.creds.outputs.available == 'true'
         with:
           node-version: 24
           package-manager-cache: false
       - name: Run F2 smoke
-        env:
-          KZ_ERP_API_URL: https://kz-erp.onrender.com
-          KZ_ERP_E2E_EMAIL: ${{ secrets.KZ_ERP_E2E_EMAIL }}
-          KZ_ERP_E2E_PASSWORD: ${{ secrets.KZ_ERP_E2E_PASSWORD }}
-          KZ_ERP_E2E_COMPANY_SLUG: ${{ secrets.KZ_ERP_E2E_COMPANY_SLUG }}
+        if: steps.creds.outputs.available == 'true'
         run: node scripts/f2-full-smoke.mjs
+      - name: Report unavailable E2E credentials
+        if: steps.creds.outputs.available != 'true'
+        run: echo "F2 operational smoke not executed because E2E credentials are not configured."
