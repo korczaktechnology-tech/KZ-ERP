@@ -25,9 +25,14 @@ try {
   const categorySchema = z.object({ id: z.string().uuid().optional(), code: z.string(), name: z.string(), parentId: z.string().uuid().optional(), active: z.boolean().default(true) });
   const childId = '11111111-1111-4111-8111-111111111111';
   const parentId = '22222222-2222-4222-8222-222222222222';
-  const imported = await importF2Batch({ db, companyId, entity: 'categories', records: [{ id: childId, code: 'CHILD', name: 'Child', parentId }, { id: parentId, code: 'PARENT', name: 'Parent' }], schema: categorySchema, collection: db.collection('categorias_produtos') });
+  const imported = await importF2Batch({ db, companyId, entity: 'categories', records: [{ id: childId, code: 'CHILD', name: 'Child', parentId }, { id: parentId, code: 'PARENT', name: 'Parent' }], schema: categorySchema, collection: categories });
   assert.deepEqual({ inserted: imported.inserted, failed: imported.failed }, { inserted: 2, failed: 0 }, 'dependency-aware category import failed');
   assert.equal((await categories.findOne({ _id: childId, companyId }))?.parentId, parentId);
+
+  const cycleA = '44444444-4444-4444-8444-444444444444';
+  const cycleB = '55555555-5555-4555-8555-555555555555';
+  const cycle = await importF2Batch({ db, companyId, entity: 'categories', records: [{ id: cycleA, code: 'CYCLE-A', name: 'Cycle A', parentId: cycleB }, { id: cycleB, code: 'CYCLE-B', name: 'Cycle B', parentId: cycleA }], schema: categorySchema, collection: categories });
+  assert.deepEqual({ inserted: cycle.inserted, failed: cycle.failed }, { inserted: 0, failed: 2 }, 'hierarchy cycle was not rejected');
 
   await raw.collection('warehouses').insertOne({ _id: 'warehouse', companyId, code: 'F2W', name: 'Smoke Warehouse', active: true, createdAt: new Date(), updatedAt: new Date() });
   const locations = raw.collection('localizacoes_armazens');
@@ -40,21 +45,17 @@ try {
   const bucket = new GridFSBucket(raw, { bucketName: 'f2_attachments' });
   const attachmentId = '33333333-3333-4333-8333-333333333333';
   const data = Buffer.from('f2 smoke attachment');
-  await new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStreamWithId(attachmentId, 'smoke.txt', { metadata: { companyId, entityType: 'category', entityId: parentId } });
-    stream.on('finish', resolve); stream.on('error', reject); stream.end(data);
-  });
+  await new Promise((resolve, reject) => { const stream = bucket.openUploadStreamWithId(attachmentId, 'smoke.txt', { metadata: { companyId, entityType: 'category', entityId: parentId } }); stream.on('finish', resolve); stream.on('error', reject); stream.end(data); });
   await raw.collection('anexos_cadastros').insertOne({ _id: attachmentId, companyId, entityType: 'category', entityId: parentId, fileName: 'smoke.txt', mimeType: 'text/plain', size: data.length, storageKey: `f2_attachments/${companyId}/${attachmentId}`, storageManaged: true, createdAt: new Date(), updatedAt: new Date() });
+  assert.equal((await scanF2Integrity(db, companyId)).healthy, true, 'valid attachment should be healthy');
 
-  const integrity = await scanF2Integrity(db, companyId);
-  assert.equal(integrity.healthy, true, `unexpected integrity issues: ${JSON.stringify(integrity.issues)}`);
+  const brokenAttachmentId = '66666666-6666-4666-8666-666666666666';
+  await raw.collection('anexos_cadastros').insertOne({ _id: brokenAttachmentId, companyId, entityType: 'category', entityId: parentId, fileName: 'broken.txt', mimeType: 'text/plain', size: 10, storageKey: `f2_attachments/${companyId}/${brokenAttachmentId}`, storageManaged: true, createdAt: new Date(), updatedAt: new Date() });
+  const broken = await scanF2Integrity(db, companyId);
+  assert.equal(broken.healthy, false, 'missing attachment binary was not detected');
+  assert.ok(broken.issues.some((issue) => issue.type === 'missing_attachment_binary' && issue.id === brokenAttachmentId));
+  await raw.collection('anexos_cadastros').deleteOne({ _id: brokenAttachmentId, companyId });
 
-  await categories.deleteMany({ companyId });
-  await locations.deleteMany({ companyId });
-  await raw.collection('warehouses').deleteMany({ companyId });
-  await raw.collection('anexos_cadastros').deleteMany({ companyId });
-  await bucket.delete(attachmentId).catch(() => undefined);
+  await categories.deleteMany({ companyId }); await locations.deleteMany({ companyId }); await raw.collection('warehouses').deleteMany({ companyId }); await raw.collection('anexos_cadastros').deleteMany({ companyId }); await bucket.delete(attachmentId).catch(() => undefined);
   console.log('F2 Mongo smoke: PASS');
-} finally {
-  await client.close();
-}
+} finally { await client.close(); }
