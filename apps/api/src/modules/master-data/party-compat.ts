@@ -1,26 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import type { Db } from 'mongodb';
+import { z } from 'zod';
 import { created, fail, noContent, paginated, parsePagination } from '../../core/api.js';
 import { tenantCollection } from '../../core/db.js';
 import { requireAuth } from '../../core/auth.js';
 import { hasPermission, type Role } from '../../core/types.js';
 import type { MasterParty } from './types.js';
 
-const compatibilitySchema = {
-  parse(input: unknown): { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean } {
-    if (!input || typeof input !== 'object') throw new Error('Invalid request body');
-    const value = input as Record<string, unknown>;
-    const code = typeof value.code === 'string' ? value.code.trim() : '';
-    const name = typeof value.name === 'string' ? value.name.trim() : '';
-    const document = value.document === undefined ? undefined : String(value.document).trim();
-    const email = value.email === undefined ? undefined : String(value.email).trim();
-    const phone = value.phone === undefined ? undefined : String(value.phone).trim();
-    if (!code || code.length > 80 || !name || name.length > 160) throw new Error('Invalid customer or supplier data');
-    if (email && (!email.includes('@') || email.length > 320)) throw new Error('Invalid email');
-    return { code, name, document: document || undefined, email: email || undefined, phone: phone || undefined, active: value.active === undefined ? true : Boolean(value.active) };
-  }
-};
+const compatibilitySchema = z.object({
+  code: z.string().trim().min(1).max(80),
+  name: z.string().trim().min(1).max(160),
+  document: z.string().trim().max(40).optional(),
+  email: z.string().email().max(320).optional(),
+  phone: z.string().trim().max(40).optional(),
+  active: z.boolean().default(true)
+});
 
 type Actor = { id: string; companyId: string; role: Role };
 const actor = (res: { locals: { user?: unknown } }): Actor => res.locals.user as Actor;
@@ -39,7 +34,7 @@ export function partyCompatibilityRouter(db: Db): Router {
       try {
         if (!canRead(res)) { fail(res, 403, 'FORBIDDEN'); return; }
         const a = actor(res); const p = parsePagination(req.query);
-        const filter = { roles: role, active: { $in: [true, false] } } as const;
+        const filter = { roles: role };
         const [items, total] = await Promise.all([
           parties.find(a.companyId, filter).sort({ createdAt: -1 }).skip(p.offset).limit(p.limit).toArray(),
           parties.find(a.companyId, filter).count()
