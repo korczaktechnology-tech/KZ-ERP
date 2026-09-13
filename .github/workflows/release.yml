@@ -2,8 +2,9 @@ name: Release Linux
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    paths:
+      - .github/release-trigger
   workflow_dispatch:
     inputs:
       version:
