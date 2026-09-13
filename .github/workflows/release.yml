@@ -16,12 +16,17 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: linux-release
+  cancel-in-progress: false
+
 env:
   DEB_NAME: KORCZAK-ERP-linux-amd64.deb
 
 jobs:
   build-linux:
     runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -169,8 +174,8 @@ jobs:
           [[ "$UPLOAD_URL" == https://uploads.github.com/repos/*/releases/*/assets ]] || { echo "ERRO: upload_url inválida"; exit 1; }
           echo "RELEASE_ID=$RELEASE_ID" >> "$GITHUB_ENV"
           echo "RELEASE_UPLOAD_URL=$UPLOAD_URL" >> "$GITHUB_ENV"
-          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/octet-stream" --data-binary @"release-artifact/$DEB_NAME" "$UPLOAD_URL?name=$DEB_NAME" >/dev/null
-          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: text/plain" --data-binary @release-artifact/SHA256SUMS.txt "$UPLOAD_URL?name=SHA256SUMS.txt" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/octet-stream" --data-binary @"release-artifact/$DEB_NAME" "$UPLOAD_URL?name=$DEB_NAME" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: text/plain" --data-binary @release-artifact/SHA256SUMS.txt "$UPLOAD_URL?name=SHA256SUMS.txt" >/dev/null
 
       - name: Create signed update manifest
         env:
@@ -188,7 +193,7 @@ jobs:
           SIGNATURE="$(base64 -w0 release-artifact/signature.bin)"
           printf '{"version":"%s","assetId":%s,"assetName":"%s","sha256":"%s","signature":"%s"}\n' "$BUILD_VERSION" "$ASSET_ID" "$DEB_NAME" "$SHA256" "$SIGNATURE" > release-artifact/UPDATE-MANIFEST.json
           rm -f /tmp/kz-update-signing-key.pem release-artifact/update-signing-payload.txt release-artifact/signature.bin
-          curl --fail-with-body --retry 3 --retry-delay 2 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/json" --data-binary @release-artifact/UPDATE-MANIFEST.json "$RELEASE_UPLOAD_URL?name=UPDATE-MANIFEST.json" >/dev/null
+          curl --fail-with-body --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 -L -X POST -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2026-03-10" -H "Content-Type: application/json" --data-binary @release-artifact/UPDATE-MANIFEST.json "$RELEASE_UPLOAD_URL?name=UPDATE-MANIFEST.json" >/dev/null
 
       - name: Validate draft release
         env:
@@ -216,21 +221,34 @@ jobs:
           set -euo pipefail
           RELEASE="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")"
           [ "$(jq -r '.draft' <<<"$RELEASE")" = "false" ] || { echo "ERRO: release ainda draft"; exit 1; }
-          MANIFEST_URL="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json") | .browser_download_url' <<<"$RELEASE")"
-          DEB_URL="$(jq -r '.assets[] | select(.name=="'"$DEB_NAME"'") | .browser_download_url' <<<"$RELEASE")"
-          [ -n "$MANIFEST_URL" ] && [ "$MANIFEST_URL" != "null" ] || { echo "ERRO: URL do manifesto ausente"; exit 1; }
-          [ -n "$DEB_URL" ] && [ "$DEB_URL" != "null" ] || { echo "ERRO: URL do .deb ausente"; exit 1; }
-          curl --fail -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$MANIFEST_URL" -o /tmp/UPDATE-MANIFEST.json
-          curl --fail -L -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream" "$DEB_URL" -o /tmp/KORCZAK-ERP-linux-amd64.deb
+          MANIFEST_ASSET_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
+          DEB_ASSET_ID="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n and .state=="uploaded") | .id' <<<"$RELEASE")"
+          [[ "$MANIFEST_ASSET_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: assetId do manifesto inválido"; exit 1; }
+          [[ "$DEB_ASSET_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: assetId do .deb inválido"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ASSET_ID" -H "Accept: application/octet-stream" --output /tmp/UPDATE-MANIFEST.json
+          gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ASSET_ID" -H "Accept: application/octet-stream" --output /tmp/KORCZAK-ERP-linux-amd64.deb
+          test -s /tmp/UPDATE-MANIFEST.json
+          test -s /tmp/KORCZAK-ERP-linux-amd64.deb
           jq -e --arg v "$BUILD_VERSION" --arg n "$DEB_NAME" '.version==$v and .assetName==$n and (.assetId|type=="number") and (.sha256|test("^[0-9a-fA-F]{64}$")) and (.signature|length>0)' /tmp/UPDATE-MANIFEST.json >/dev/null
+          MANIFEST_ASSET_ID_JSON="$(jq -r '.assetId' /tmp/UPDATE-MANIFEST.json)"
+          [ "$MANIFEST_ASSET_ID_JSON" = "$DEB_ASSET_ID" ] || { echo "ERRO: assetId do manifesto não corresponde ao asset publicado"; exit 1; }
+          EXPECTED_SHA="$(jq -r '.sha256' /tmp/UPDATE-MANIFEST.json | tr '[:upper:]' '[:lower:]')"
+          ACTUAL_SHA="$(sha256sum /tmp/KORCZAK-ERP-linux-amd64.deb | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')"
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "ERRO: SHA256 baixado diverge do manifesto"; exit 1; }
           echo "Release/update smoke test OK: $BUILD_TAG"
 
       - name: Cleanup failed draft release
-        if: failure() && env.RELEASE_ID != ''
+        if: ${{ failure() && env.RELEASE_ID != '' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
           if [[ "$RELEASE_ID" =~ ^[0-9]+$ ]]; then
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" || true
+            RELEASE_STATE="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" 2>/dev/null || true)"
+            if [ "$(jq -r '.draft // false' <<<"$RELEASE_STATE" 2>/dev/null)" = "true" ]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" || true
+              echo "Draft release removida após falha."
+            else
+              echo "Release já publicada; cleanup não irá removê-la."
+            fi
           fi
