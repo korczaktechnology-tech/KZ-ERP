@@ -23,6 +23,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[release]')
     runs-on: ubuntu-22.04
     steps:
+      # Release pipeline: draft -> signed assets -> validation -> publish.
       - name: Checkout
         uses: actions/checkout@v4
         with:
