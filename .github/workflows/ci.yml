@@ -93,6 +93,33 @@ jobs:
             echo "ERRO: configuração PostgreSQL detectada"; exit 1
           fi
           grep -Rni 'MONGODB_URI' apps/api infra render.yaml docker-compose.yml
+  f2-mongo:
+    name: F2 real MongoDB integration
+    runs-on: ubuntu-22.04
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install API dependencies
+        working-directory: apps/api
+        run: npm install --no-audit --no-fund --prefer-offline
+      - name: Run F2 Mongo smoke
+        working-directory: apps/api
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/kz_erp_f2_smoke
+        run: node --import tsx scripts/f2-mongo-smoke.mjs
   f2-e2e:
     name: F2 operational API smoke
     runs-on: ubuntu-22.04
