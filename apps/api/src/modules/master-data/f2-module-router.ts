@@ -16,3 +16,5 @@ export function f2ModuleRouter(db: Db): Router {
   router.use(f2IoRouter(db));
   return router;
 }
+
+// F2 route order is intentional: guards and data health precede legacy CRUD, import and IO.
