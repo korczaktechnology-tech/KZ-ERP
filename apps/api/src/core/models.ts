@@ -3,8 +3,6 @@ import type { Document, Decimal128 } from 'mongodb';
 export type Id = string;
 export type BaseDocument = { _id: Id; companyId: Id; createdAt: Date; updatedAt: Date };
 export type Product = BaseDocument & { sku: string; name: string; description?: string; active: boolean; unit: string; price: Decimal128 };
-export type Customer = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
-export type Supplier = BaseDocument & { code: string; name: string; document?: string; email?: string; phone?: string; active: boolean };
 export type Warehouse = BaseDocument & { code: string; name: string; active: boolean };
 export type StockBalance = BaseDocument & { warehouseId: Id; productId: Id; quantity: Decimal128; reservedQuantity: Decimal128; minimumQuantity: Decimal128 };
 export type StockMovement = { _id?: Id; companyId: Id; type: 'receipt' | 'issue' | 'adjustment' | 'transfer'; productId: Id; warehouseId: Id; destinationWarehouseId?: Id; quantity: Decimal128; direction?: 'increase' | 'decrease'; reason?: string; reference?: string; idempotencyKey?: string; operationHash?: string; actorUserId: Id; createdAt: Date };
@@ -13,5 +11,5 @@ export type SalesOrder = BaseDocument & { number: string; customerId: Id; status
 export type FinancialEntry = BaseDocument & { description: string; type: 'receivable' | 'payable'; status: 'open' | 'paid' | 'cancelled'; amount: Decimal128; paidAmount: Decimal128; dueDate: Date; paidAt?: Date; reference?: string; categoryId?: Id; idempotencyKey?: string; operationHash?: string };
 export type FiscalDocument = BaseDocument & { number: string; series?: string; type: 'invoice' | 'service_invoice' | 'other'; status: 'draft' | 'issued' | 'cancelled'; accessKey?: string; issuedAt?: Date };
 export type ScmAggregate = BaseDocument & { number: string; status: string; idempotencyKey?: string; operationHash?: string };
-export type ModuleCollectionMap = { products: Product; customers: Customer; suppliers: Supplier; warehouses: Warehouse; stock_balances: StockBalance; sales_orders: SalesOrder; financial_entries: FinancialEntry; fiscal_documents: FiscalDocument; scm_purchase_requests: ScmAggregate; scm_purchase_quotes: ScmAggregate; scm_purchase_orders: ScmAggregate; scm_purchase_receipts: ScmAggregate };
+export type ModuleCollectionMap = { products: Product; warehouses: Warehouse; sales_orders: SalesOrder; financial_entries: FinancialEntry; fiscal_documents: FiscalDocument; scm_purchase_requests: ScmAggregate; scm_purchase_quotes: ScmAggregate; scm_purchase_orders: ScmAggregate; scm_purchase_receipts: ScmAggregate };
 export type TenantDocument = Document & { companyId: string };
