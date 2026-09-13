@@ -29,6 +29,7 @@ try {
   assert.deepEqual({ inserted: imported.inserted, failed: imported.failed }, { inserted: 2, failed: 0 }, 'dependency-aware category import failed');
   assert.equal((await categories.findOne({ _id: childId, companyId }))?.parentId, parentId);
 
+  await raw.collection('warehouses').insertOne({ _id: 'warehouse', companyId, code: 'F2W', name: 'Smoke Warehouse', active: true, createdAt: new Date(), updatedAt: new Date() });
   const locations = raw.collection('localizacoes_armazens');
   await locations.insertMany([
     { _id: 'zone', companyId, warehouseId: 'warehouse', kind: 'zone', code: 'Z', name: 'Zone', createdAt: new Date(), updatedAt: new Date() },
@@ -50,6 +51,7 @@ try {
 
   await categories.deleteMany({ companyId });
   await locations.deleteMany({ companyId });
+  await raw.collection('warehouses').deleteMany({ companyId });
   await raw.collection('anexos_cadastros').deleteMany({ companyId });
   await bucket.delete(attachmentId).catch(() => undefined);
   console.log('F2 Mongo smoke: PASS');
