@@ -1,0 +1,86 @@
+import type { Db } from 'mongodb';
+import { F2_ENTITY_COLLECTIONS, validLocationParentKind, wouldCreateCycle } from './f2-hardening.js';
+
+type Issue = { type: string; id: string; details?: Record<string, unknown> };
+
+const ENTITY_COLLECTIONS = {
+  product: 'products', party: 'parties', address: 'addresses', unit: 'units', price_list: 'price_lists', price: 'prices',
+  warehouse: 'warehouses', category: 'product_categories', brand: 'product_brands', contact: 'party_contacts',
+  location: 'warehouse_locations', classification: 'classifications', attachment: 'master_attachments', relationship: 'master_relationships',
+} as const;
+
+export async function scanF2Integrity(db: Db, companyId: string): Promise<{ healthy: boolean; issueCount: number; issues: Issue[] }> {
+  const docs: Record<string, any[]> = {};
+  const sets: Record<string, Set<string>> = {};
+  for (const [name, collection] of Object.entries(ENTITY_COLLECTIONS)) {
+    docs[name] = await db.collection(collection).find({ companyId }).toArray();
+    sets[name] = new Set(docs[name].map((doc) => String(doc._id)));
+  }
+
+  const issues: Issue[] = [];
+  const push = (type: string, id: unknown, details?: Record<string, unknown>) => issues.push({ type, id: String(id), details });
+
+  for (const doc of docs.address) if (!sets.party.has(String(doc.partyId))) push('orphan_address', doc._id, { partyId: doc.partyId });
+  for (const doc of docs.contact) if (!sets.party.has(String(doc.partyId))) push('orphan_contact', doc._id, { partyId: doc.partyId });
+
+  for (const doc of docs.product) {
+    if (typeof doc.unit === 'string' && !docs.unit.some((unit) => unit.code === doc.unit || String(unit._id) === doc.unit)) push('orphan_product_unit', doc._id, { unit: doc.unit });
+  }
+
+  for (const doc of docs.price) {
+    if (!sets.price_list.has(String(doc.priceListId))) push('orphan_price_list_reference', doc._id, { priceListId: doc.priceListId });
+    if (!sets.product.has(String(doc.productId))) push('orphan_price_product_reference', doc._id, { productId: doc.productId });
+    if (typeof doc.amount === 'number' && doc.amount < 0) push('invalid_price_amount', doc._id, { amount: doc.amount });
+    if (typeof doc.minQuantity === 'number' && doc.minQuantity <= 0) push('invalid_price_min_quantity', doc._id, { minQuantity: doc.minQuantity });
+  }
+
+  for (const kind of ['category', 'classification'] as const) {
+    for (const doc of docs[kind]) {
+      if (doc.parentId && !sets[kind].has(String(doc.parentId))) push(`orphan_${kind}_parent`, doc._id, { parentId: doc.parentId });
+      if (doc.parentId && await wouldCreateCycle(db.collection(ENTITY_COLLECTIONS[kind]), companyId, String(doc._id), String(doc.parentId))) push(`${kind}_cycle`, doc._id, { parentId: doc.parentId });
+    }
+  }
+
+  for (const doc of docs.location) {
+    if (!sets.warehouse.has(String(doc.warehouseId))) push('orphan_location_warehouse', doc._id, { warehouseId: doc.warehouseId });
+    if (!doc.parentId) {
+      if (doc.kind !== 'zone') push('invalid_location_root_kind', doc._id, { kind: doc.kind });
+      continue;
+    }
+    if (!sets.location.has(String(doc.parentId))) push('orphan_location_parent', doc._id, { parentId: doc.parentId });
+    const parent = docs.location.find((item) => String(item._id) === String(doc.parentId));
+    if (parent && (!validLocationParentKind(String(doc.kind), String(parent.kind)) || String(parent.warehouseId) !== String(doc.warehouseId))) {
+      push('invalid_location_hierarchy', doc._id, { parentId: doc.parentId, kind: doc.kind, parentKind: parent.kind });
+    }
+    if (await wouldCreateCycle(db.collection(ENTITY_COLLECTIONS.location), companyId, String(doc._id), String(doc.parentId))) push('location_cycle', doc._id, { parentId: doc.parentId });
+  }
+
+  for (const doc of docs.attachment) {
+    const collectionName = F2_ENTITY_COLLECTIONS[doc.entityType as keyof typeof F2_ENTITY_COLLECTIONS];
+    if (!collectionName || !(await db.collection(collectionName).findOne({ _id: doc.entityId, companyId }, { projection: { _id: 1 } }))) push('orphan_attachment_target', doc._id, { entityType: doc.entityType, entityId: doc.entityId });
+    if (doc.storageManaged) {
+      const file = await db.collection('f2_attachments.files').findOne({ _id: doc._id as any, 'metadata.companyId': companyId }, { projection: { _id: 1, length: 1 } });
+      if (!file) push('missing_attachment_binary', doc._id);
+      else if (Number(file.length) !== Number(doc.size)) push('attachment_size_mismatch', doc._id, { metadataSize: doc.size, binarySize: file.length });
+    }
+  }
+
+  for (const doc of docs.relationship) {
+    const sourceCollection = F2_ENTITY_COLLECTIONS[doc.sourceType as keyof typeof F2_ENTITY_COLLECTIONS];
+    const targetCollection = F2_ENTITY_COLLECTIONS[doc.targetType as keyof typeof F2_ENTITY_COLLECTIONS];
+    if (!sourceCollection || !targetCollection) push('invalid_relationship_type', doc._id, { sourceType: doc.sourceType, targetType: doc.targetType });
+    else {
+      const [source, target] = await Promise.all([
+        db.collection(sourceCollection).findOne({ _id: doc.sourceId, companyId }, { projection: { _id: 1 } }),
+        db.collection(targetCollection).findOne({ _id: doc.targetId, companyId }, { projection: { _id: 1 } }),
+      ]);
+      if (!source || !target) push('invalid_relationship_reference', doc._id, { sourceId: doc.sourceId, targetId: doc.targetId });
+    }
+  }
+
+  const referencedFiles = new Set(docs.attachment.filter((doc) => doc.storageManaged).map((doc) => String(doc._id)));
+  const files = await db.collection('f2_attachments.files').find({ 'metadata.companyId': companyId }, { projection: { _id: 1 } }).toArray();
+  for (const file of files) if (!referencedFiles.has(String(file._id))) push('orphan_attachment_binary', file._id);
+
+  return { healthy: issues.length === 0, issueCount: issues.length, issues };
+}
