@@ -1,0 +1,173 @@
+openapi: 3.0.3
+info:
+  title: KORCZAK ERP — F1 Core API
+  version: 1.0.0
+  description: Contract for the F1 Core tenant, company, branch, user, RBAC and audit surface.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /auth/bootstrap:
+    post:
+      security: []
+      summary: Bootstrap the first company and owner
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BootstrapRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/Created'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /auth/login:
+    post:
+      security: []
+      summary: Authenticate a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [email, password], properties: {email: {type: string, format: email}, password: {type: string}, companySlug: {type: string}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '401': {$ref: '#/components/responses/Unauthorized'}, '409': {$ref: '#/components/responses/Conflict'}}
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [refreshToken], properties: {refreshToken: {type: string}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '401': {$ref: '#/components/responses/Unauthorized'}}
+  /auth/logout:
+    post:
+      summary: Revoke a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [refreshToken], properties: {refreshToken: {type: string}}}
+      responses: {'204': {description: Revoked}, '401': {$ref: '#/components/responses/Unauthorized'}}
+  /auth/change-password:
+    post:
+      summary: Change the authenticated user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [currentPassword, newPassword], properties: {currentPassword: {type: string}, newPassword: {type: string, minLength: 10}}}
+      responses: {'204': {description: Password changed}, '401': {$ref: '#/components/responses/Unauthorized'}}
+  /core/me:
+    get: {summary: Current authenticated identity, responses: {'200': {$ref: '#/components/responses/Ok'}}}
+  /core/tenant:
+    get: {summary: Current tenant context, responses: {'200': {$ref: '#/components/responses/Ok'}}}
+  /core/company:
+    get: {summary: Current company, responses: {'200': {$ref: '#/components/responses/Ok'}}}
+    patch:
+      summary: Update company name
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, required: [name], properties: {name: {type: string, minLength: 2, maxLength: 120}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '403': {$ref: '#/components/responses/Forbidden'}}
+  /core/branches:
+    get:
+      summary: List branches in the current tenant
+      parameters: [{in: query, name: limit, schema: {type: integer}}, {in: query, name: offset, schema: {type: integer}}]
+      responses: {'200': {$ref: '#/components/responses/Paginated'}}
+    post:
+      summary: Create a branch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/BranchWrite'}
+      responses: {'201': {$ref: '#/components/responses/Created'}, '403': {$ref: '#/components/responses/Forbidden'}}
+  /core/branches/{id}:
+    get:
+      summary: Get a branch
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '404': {$ref: '#/components/responses/NotFound'}}
+    patch:
+      summary: Update a branch
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/BranchWrite'}}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '403': {$ref: '#/components/responses/Forbidden'}}
+    delete:
+      summary: Deactivate a branch without deleting historical data
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '409': {$ref: '#/components/responses/Conflict'}}
+  /core/users:
+    get:
+      summary: List users in the current tenant
+      responses: {'200': {$ref: '#/components/responses/Paginated'}}
+    post:
+      summary: Create a user
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UserCreate'}}}}
+      responses: {'201': {$ref: '#/components/responses/Created'}, '403': {$ref: '#/components/responses/Forbidden'}}
+  /core/users/{id}:
+    patch:
+      summary: Update, activate or deactivate a user
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/UserUpdate'}}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}, '403': {$ref: '#/components/responses/Forbidden'}}
+  /core/audit:
+    get:
+      summary: List tenant audit events
+      responses: {'200': {$ref: '#/components/responses/Paginated'}, '403': {$ref: '#/components/responses/Forbidden'}}
+  /core/rbac/roles:
+    get: {summary: List supported roles, responses: {'200': {$ref: '#/components/responses/Ok'}}}
+  /core/rbac/permissions:
+    get: {summary: List permissions, responses: {'200': {$ref: '#/components/responses/Ok'}}}
+    post:
+      summary: Create a permission definition
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [key, name], properties: {key: {type: string}, name: {type: string}, description: {type: string}}}}}}
+      responses: {'201': {$ref: '#/components/responses/Created'}}
+  /core/rbac/role-permissions:
+    put:
+      summary: Set a persistent role permission effect
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [roleKey, permissionKey], properties: {roleKey: {type: string}, permissionKey: {type: string}, effect: {type: string, enum: [allow, deny]}}}}}}
+      responses: {'200': {$ref: '#/components/responses/Ok'}}
+  /core/rbac/role-permissions/{roleKey}:
+    get:
+      summary: List effective persistent role permissions
+      parameters: [{in: path, name: roleKey, required: true, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/Ok'}}
+  /core/scopes:
+    get: {summary: List access scopes, responses: {'200': {$ref: '#/components/responses/Paginated'}}}
+    post: {summary: Create an access scope, responses: {'201': {$ref: '#/components/responses/Created'}}}
+  /core/scopes/{id}:
+    patch:
+      summary: Update an access scope
+      parameters: [{in: path, name: id, required: true, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/Ok'}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    BootstrapRequest:
+      type: object
+      required: [companyName, slug, name, email, password, bootstrapKey]
+      properties: {companyName: {type: string}, slug: {type: string}, name: {type: string}, email: {type: string, format: email}, password: {type: string, minLength: 10}, bootstrapKey: {type: string}}
+    BranchWrite:
+      type: object
+      required: [code, name]
+      properties: {code: {type: string}, name: {type: string}, legalName: {type: string}, document: {type: string}, active: {type: boolean}}
+    UserCreate:
+      type: object
+      required: [email, name, password, role]
+      properties: {email: {type: string, format: email}, name: {type: string}, password: {type: string, minLength: 10}, role: {type: string, enum: [admin, manager, user, viewer]}}
+    UserUpdate:
+      type: object
+      properties: {name: {type: string}, role: {type: string, enum: [admin, manager, user, viewer]}, password: {type: string, minLength: 10}, active: {type: boolean}}
+  responses:
+    Ok: {description: Successful operation}
+    Created: {description: Resource created}
+    Paginated: {description: Paginated result}
+    Unauthorized: {description: Authentication required}
+    Forbidden: {description: Permission denied}
+    NotFound: {description: Resource not found}
+    Conflict: {description: Conflict}
