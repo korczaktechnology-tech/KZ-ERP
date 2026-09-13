@@ -35,6 +35,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - name: Lint GitHub Actions workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash
+          ./actionlint .github/workflows/release.yml .github/workflows/ci.yml
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -84,9 +91,6 @@ jobs:
           TAG="v$VERSION"
           echo "BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD_TAG=$TAG" >> "$GITHUB_ENV"
-          if git ls-remote --exit-code --refs origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "ERRO: a tag $TAG já existe."; exit 1
-          fi
           EXISTING="$(timeout 30s gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name=="'"$TAG"'") | [.id,.draft] | @tsv')"
           if [ -n "$EXISTING" ]; then
             read -r EXISTING_ID EXISTING_DRAFT <<< "$(printf '%s\n' "$EXISTING" | sed -n '1p')"
@@ -96,7 +100,10 @@ jobs:
               echo "ERRO: a release $TAG já está publicada."; exit 1
             fi
           fi
-          LATEST="$(timeout 30s gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft==false and .prerelease==false) | .tag_name' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -n1)"
+          if git ls-remote --exit-code --refs origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "ERRO: a tag $TAG já existe no repositório."; exit 1
+          fi
+          LATEST="$(timeout 30s gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.draft==false and .prerelease==false) | .tag_name' | sed -n 's/^v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$/\1/p' | sort -V | tail -n1)"
           if [ -n "$LATEST" ]; then
             node -e 'const a=process.argv[1].split(".").map(Number),b=process.argv[2].split(".").map(Number);for(let i=0;i<3;i++){if(a[i]>b[i])process.exit(0);if(a[i]<b[i])process.exit(1)}process.exit(1)' "$VERSION" "$LATEST" || { echo "ERRO: versão $VERSION não é superior à última release $LATEST"; exit 1; }
           fi
@@ -108,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           node -e 'const fs=require("fs"),v=process.env.VERSION;for(const f of ["package.json","src-tauri/tauri.conf.json"]){const d=JSON.parse(fs.readFileSync(f,"utf8"));d.version=v;fs.writeFileSync(f,JSON.stringify(d,null,2)+"\n")}'
-          python3 -c 'from pathlib import Path; import os,re; p=Path("src-tauri/Cargo.toml"); t=p.read_text(); v=os.environ["VERSION"]; u,n=re.subn(r"(?m)^version\\s*=\\s*\"[^\"]+\"", f"version = \\\"{v}\\\"", t, count=1); assert n==1, "ERRO: não foi possível atualizar Cargo.toml"; p.write_text(u)'
+          node -e 'const fs=require("fs"),v=process.env.VERSION,p="src-tauri/Cargo.toml",t=fs.readFileSync(p,"utf8"),u=t.replace(/^version\s*=\s*"[^"]+"/m,`version = "${v}"`);if(u===t)throw new Error("ERRO: não foi possível atualizar Cargo.toml");fs.writeFileSync(p,u)'
           [ "$(node -p "require('./package.json').version")" = "$VERSION" ]
           [ "$(node -p "require('./src-tauri/tauri.conf.json').version")" = "$VERSION" ]
           [ "$(sed -n 's/^version = "\([^"]*\)"/\1/p' src-tauri/Cargo.toml | head -n1)" = "$VERSION" ]
@@ -241,9 +248,7 @@ jobs:
           MANIFEST_ID="$(jq -r '.assets[] | select(.name=="UPDATE-MANIFEST.json" and .state=="uploaded") | .id' <<<"$RELEASE")"
           SUMS_ID="$(jq -r '.assets[] | select(.name=="SHA256SUMS.txt" and .state=="uploaded") | .id' <<<"$RELEASE")"
           DEB_DIGEST="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n) | .digest // ""' <<<"$RELEASE")"
-          [[ "$DEB_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: ID do .deb inválido"; exit 1; }
-          [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: ID do manifesto inválido"; exit 1; }
-          [[ "$SUMS_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: ID do SHA256SUMS inválido"; exit 1; }
+          [[ "$DEB_ID" =~ ^[0-9]+$ ]] && [[ "$MANIFEST_ID" =~ ^[0-9]+$ ]] && [[ "$SUMS_ID" =~ ^[0-9]+$ ]] || { echo "ERRO: asset ID inválido"; exit 1; }
           [[ "$DEB_DIGEST" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || { echo "ERRO: digest do .deb inválido"; exit 1; }
           timeout 60s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$MANIFEST_ID" -H "Accept: application/octet-stream" --output "$MANIFEST"
           timeout 150s gh api "repos/$GITHUB_REPOSITORY/releases/assets/$DEB_ID" -H "Accept: application/octet-stream" --output "$DEB"
@@ -271,7 +276,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          PUBLISHED="$(timeout 30s gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true)"
+          PUBLISHED="$(timeout 30s gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -F make_latest=true)"
           [ "$(jq -r '.draft' <<<"$PUBLISHED")" = "false" ] || { echo "ERRO: release não foi publicada"; exit 1; }
           [ "$(jq -r '.tag_name' <<<"$PUBLISHED")" = "$BUILD_TAG" ] || { echo "ERRO: tag publicada incorreta"; exit 1; }
           [ "$(jq -r '.target_commitish' <<<"$PUBLISHED")" = "$GITHUB_SHA" ] || { echo "ERRO: commit publicado incorreto"; exit 1; }
@@ -302,7 +307,6 @@ jobs:
           [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "ERRO: SHA pós-publicação diverge"; exit 1; }
           GITHUB_DIGEST="$(jq -r --arg n "$DEB_NAME" '.assets[] | select(.name==$n) | .digest // ""' <<<"$RELEASE")"
           [ "$GITHUB_DIGEST" = "sha256:$ACTUAL_SHA" ] || { echo "ERRO: digest pós-publicação diverge"; exit 1; }
-
           rm -f "$API_MANIFEST"
           for attempt in $(seq 1 12); do
             HTTP="$(curl --silent --show-error --output "$API_MANIFEST" --write-out '%{http_code}' --connect-timeout 10 --max-time 30 "$UPDATE_API_BASE/api/v1/updates/latest" || true)"
@@ -314,18 +318,16 @@ jobs:
           [ "$(jq -r '.assetId' "$API_MANIFEST")" = "$DEB_ID" ] || { echo "ERRO: /latest retornou assetId incorreto"; exit 1; }
           [ "$(jq -r '.assetName' "$API_MANIFEST")" = "$DEB_NAME" ] || { echo "ERRO: /latest retornou assetName incorreto"; exit 1; }
           [ "$(jq -r '.sha256' "$API_MANIFEST" | tr '[:upper:]' '[:lower:]')" = "$ACTUAL_SHA" ] || { echo "ERRO: /latest retornou SHA incorreto"; exit 1; }
-          [ -n "$(jq -r '.signature // empty' "$API_MANIFEST")" ] || { echo "ERRO: /latest não retornou assinatura"; exit 1; }
-
+          SIGNATURE="$(jq -r '.signature // empty' "$API_MANIFEST")"
+          [ -n "$SIGNATURE" ] || { echo "ERRO: /latest não retornou assinatura"; exit 1; }
           timeout 180s curl --fail --silent --show-error --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 150 "$UPDATE_API_BASE/api/v1/updates/asset/$DEB_ID?version=$BUILD_VERSION&sha256=$ACTUAL_SHA" -o "$API_DEB"
           [ "$(sha256sum "$API_DEB" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')" = "$ACTUAL_SHA" ] || { echo "ERRO: /asset retornou SHA incorreto"; exit 1; }
-
           WRONG_SHA="$(printf '0%.0s' {1..64})"
           [ "$WRONG_SHA" = "$ACTUAL_SHA" ] && WRONG_SHA="$(printf 'f%.0s' {1..64})"
           API_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 10 --max-time 60 "$UPDATE_API_BASE/api/v1/updates/asset/$DEB_ID?version=$BUILD_VERSION&sha256=$WRONG_SHA")"
           [ "$API_STATUS" = "409" ] || { echo "ERRO: /asset aceitou SHA adulterado (HTTP $API_STATUS)"; exit 1; }
-
           API_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --connect-timeout 10 --max-time 60 "$UPDATE_API_BASE/api/v1/updates/asset/$MANIFEST_ID?version=$BUILD_VERSION&sha256=$ACTUAL_SHA")"
-          [ "$API_STATUS" = "404" ] || { echo "ERRO: /asset aceitou assetId de manifesto (HTTP $API_STATUS)"; exit 1; }
+          [ "$API_STATUS" = "404" ] || { echo "ERRO: /asset aceitou assetId do manifesto (HTTP $API_STATUS)"; exit 1; }
           echo "End-to-end release/update smoke test OK: $BUILD_TAG"
 
       - name: Cleanup failed draft release
