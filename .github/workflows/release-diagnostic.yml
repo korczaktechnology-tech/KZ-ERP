@@ -1,0 +1,17 @@
+name: Release Diagnostic
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/release-trigger-test
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "release diagnostic workflow executed"
