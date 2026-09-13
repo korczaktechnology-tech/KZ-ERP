@@ -10,7 +10,7 @@ import { importF2Batch } from './f2-import.js';
 
 const id = z.string().uuid();
 const base = z.object({ code: z.string().trim().min(1).max(80), name: z.string().trim().min(1).max(160), description: z.string().trim().max(2000).optional(), active: z.boolean().default(true) });
-const withId = <T extends z.ZodRawShape>(shape: T) => z.object({ id: id.optional(), ...shape });
+const withId = (shape: any) => z.object({ id: id.optional(), ...shape });
 const schemas = {
   products: withId({ sku: z.string().min(1).max(80), name: z.string().min(1).max(160), description: z.string().max(2000).optional(), unit: z.string().min(1).max(20), price: z.union([z.string(), z.number().finite().min(0)]), active: z.boolean().default(true) }),
   parties: withId({ code: z.string().min(1).max(80), kind: z.enum(['person', 'company']), roles: z.array(z.string()).min(1).max(5), name: z.string().min(1).max(160), legalName: z.string().max(200).optional(), document: z.string().max(40).optional(), email: z.string().email().max(320).optional(), phone: z.string().max(40).optional(), active: z.boolean().default(true) }),
