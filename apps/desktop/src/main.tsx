@@ -1,4 +1,5 @@
 import './F1Admin.css';
 import { mount } from './DesktopApp';
 import './KorczakDesignSystem.css';
+import './KorczakModulePolish.css';
 mount();
