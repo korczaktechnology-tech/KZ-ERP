@@ -25,7 +25,7 @@ const resources:Resource[]=[
 const importEntities=resources.filter(r=>r.importable);
 const masterPaths:Record<string,string>={products:'/api/v1/master-data/products',units:'/api/v1/master-data/units',price_lists:'/api/v1/master-data/price-lists',parties:'/api/v1/master-data/parties',warehouses:'/api/v1/master-data/warehouses'};
 const f2Paths:Record<string,string>={categories:'/api/v1/master-data/f2/categories',brands:'/api/v1/master-data/f2/brands',contacts:'/api/v1/master-data/f2/contacts',locations:'/api/v1/master-data/f2/warehouse-locations',classifications:'/api/v1/master-data/f2/classifications',relationships:'/api/v1/master-data/f2/relationships',attachments:'/api/v1/master-data/f2/attachments'};
-const corePaths:Record<string,string>={cost_centers:'/api/v1/core/cost_centers',org_units:'/api/v1/core/org_units'};
+const corePaths:Record<string,string>={cost_centers:'/api/v1/master-data/f2/cost-centers',org_units:'/api/v1/master-data/f2/org-units'};
 const attachmentTypes:Record<string,string>={products:'product',categories:'category',brands:'brand',units:'unit',price_lists:'price_list',prices:'price',parties:'party',addresses:'address',contacts:'contact',warehouses:'warehouse',locations:'location',classifications:'classification',cost_centers:'cost_center',org_units:'org_unit',relationships:'relationship',attachments:'attachment'};
 function idOf(r:Row){return String(r.id??r._id??'')}
 function unwrap<T=unknown>(v:any):T{const value=v?.data??v;return (value?.items??value?.records??value) as T}
