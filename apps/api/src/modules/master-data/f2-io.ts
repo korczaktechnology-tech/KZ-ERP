@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import type { Db from 'mongodb'; import { GridFSBucket } from 'mongodb'; import { Router, type Request, type Response, type NextFunction } from 'express';
-import { requireAuth } from '../../core/auth.js'; import { hasPermission, type Role } from '../../core/types.js'; import { tenantCollection } from '../../core/db.js'; import { fail, noContent, ok } from '../../core/api.js'; import { validateF2Reference } from './f2-hardening.js';
+import type { Db } from 'mongodb';
+import { GridFSBucket } from 'mongodb';
+import { Router, type Request, type Response, type NextFunction } from 'express';
+import { requireAuth } from '../../core/auth.js';
+import { hasPermission, type Role } from '../../core/types.js';
+import { tenantCollection } from '../../core/db.js';
+import { fail, noContent, ok } from '../../core/api.js';
+import { validateF2Reference } from './f2-hardening.js';
 
 type Actor={id:string;companyId:string;role:Role}; type Doc={_id:string;companyId:string;[key:string]:any}; type Audit={_id:string;companyId:string;actorUserId:string;action:string;resource:string;resourceId:string;metadata?:Record<string,unknown>;createdAt:Date;updatedAt:Date};
 const MAX_ATTACHMENT_BYTES=50_000_000; const EXPORT_SCHEMA_VERSION=2; const entities=['products','parties','addresses','units','price_lists','prices','warehouses','categories','brands','contacts','locations','classifications','attachments','relationships'] as const; const physical:Record<(typeof entities)[number],string>={products:'products',parties:'parties',addresses:'addresses',units:'units',price_lists:'price_lists',prices:'prices',warehouses:'warehouses',categories:'product_categories',brands:'product_brands',contacts:'party_contacts',locations:'warehouse_locations',classifications:'classifications',attachments:'master_attachments',relationships:'master_relationships'};
