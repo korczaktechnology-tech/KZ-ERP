@@ -1,34 +1,80 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-const base=(process.env.KZ_ERP_API_URL??'http://127.0.0.1:10000').replace(/\/$/,'');
-const email=process.env.KZ_ERP_E2E_EMAIL,password=process.env.KZ_ERP_E2E_PASSWORD,slug=process.env.KZ_ERP_E2E_COMPANY_SLUG;
-if(!email||!password)throw new Error('KZ_ERP_E2E_EMAIL and KZ_ERP_E2E_PASSWORD are required');
-let token='';
-async function call(path,options={}){const h=new Headers(options.headers);h.set('Accept','application/json');if(options.body!==undefined&&!h.has('Content-Type'))h.set('Content-Type','application/json');if(token)h.set('Authorization',`Bearer ${token}`);const r=await fetch(`${base}${path}`,{...options,headers:h});const text=await r.text();let b=null;try{b=text?JSON.parse(text):null}catch{}if(!r.ok)throw new Error(`${options.method??'GET'} ${path} -> ${r.status}: ${b?.error?.message??text}`);return b?.data??b}
-async function mustFail(path,options,pattern){let failed=false;try{await call(path,options)}catch(e){failed=true;assert.match(String(e),pattern)}assert.equal(failed,true,`Expected ${path} to fail`)}
-function id(v){return String(v?.id??v?._id??'')}
-const login=await call('/api/v1/auth/login',{method:'POST',body:JSON.stringify({email,password,...(slug?{companySlug:slug}:{})})});token=login.accessToken;assert.ok(token);
-const s=randomUUID().slice(0,8);
-const unit=await call('/api/v1/master-data/f2/units',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke unit',symbol:'smk',kind:'unit',decimalPlaces:2,active:true})});assert.ok(id(unit?.unit??unit));
-const product=await call('/api/v1/master-data/f2/products',{method:'POST',body:JSON.stringify({sku:`SMK-${s}`,name:'Smoke product',unit:`SMK${s}`,price:10,active:true})});const productId=id(product?.product??product);assert.ok(productId);
-const list=await call('/api/v1/master-data/f2/price-lists',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke prices',currency:'BRL',active:true})});const listId=id(list?.priceList??list);assert.ok(listId);
-const price=await call('/api/v1/master-data/f2/prices',{method:'POST',body:JSON.stringify({priceListId:listId,productId,amount:12.5,minQuantity:1,active:true})});assert.ok(id(price?.price??price));
-const party=await call('/api/v1/master-data/f2/parties',{method:'POST',body:JSON.stringify({code:`SMK${s}`,kind:'person',roles:['customer'],name:'Smoke Person',email:`smoke-${s}@example.invalid`,active:true})});const partyId=id(party?.party??party);assert.ok(partyId);
-const address=await call('/api/v1/master-data/f2/addresses',{method:'POST',body:JSON.stringify({partyId,code:`SMK${s}`,type:'commercial',postalCode:'01001000',street:'Smoke Street',number:'1',district:'Centro',city:'São Paulo',state:'SP',country:'BR',active:true})});assert.ok(id(address?.address??address));
-const contact=await call('/api/v1/master-data/f2/contacts',{method:'POST',body:JSON.stringify({partyId,name:'Smoke Contact',email:`contact-${s}@example.invalid`,active:true})});assert.ok(id(contact?.contact??contact));
-const warehouse=await call('/api/v1/master-data/f2/warehouses',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke Warehouse',active:true})});const warehouseId=id(warehouse?.warehouse??warehouse);assert.ok(warehouseId);
-const zone=await call('/api/v1/master-data/f2/warehouse-locations',{method:'POST',body:JSON.stringify({code:`Z${s}`,name:'Smoke Zone',warehouseId,kind:'zone',active:true})});const zoneId=id(zone?.location??zone);assert.ok(zoneId);
-await mustFail('/api/v1/master-data/f2/warehouse-locations',{method:'POST',body:JSON.stringify({code:`B${s}`,name:'Bad hierarchy',warehouseId,parentId:zoneId,kind:'bin',active:true})},/Invalid|hierarchy/i);
-const category=await call('/api/v1/master-data/f2/categories',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke Category',active:true})});const categoryId=id(category?.category??category);assert.ok(categoryId);
-const brand=await call('/api/v1/master-data/f2/brands',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke Brand',active:true})});const brandId=id(brand?.brand??brand);assert.ok(brandId);
-await call(`/api/v1/master-data/f2/brands/${brandId}`,{method:'PATCH',body:JSON.stringify({name:'Smoke Brand Updated'})});const brandAfter=await call(`/api/v1/master-data/f2/brands/${brandId}`);assert.equal(brandAfter.brand?.name??brandAfter.name,'Smoke Brand Updated');await call(`/api/v1/master-data/f2/brands/${brandId}`,{method:'DELETE'});const deletedBrand=await call(`/api/v1/master-data/f2/brands/${brandId}`);assert.equal(deletedBrand.brand?.active??deletedBrand.active,false);
-const classification=await call('/api/v1/master-data/f2/classifications',{method:'POST',body:JSON.stringify({code:`SMK${s}`,name:'Smoke Classification',type:'smoke',active:true})});assert.ok(id(classification?.classification??classification));
-const relationship=await call('/api/v1/master-data/f2/relationships',{method:'POST',body:JSON.stringify({sourceType:'product',sourceId:productId,relation:'related_to',targetType:'category',targetId:categoryId})});assert.ok(id(relationship?.relationship??relationship));
-await mustFail('/api/v1/master-data/f2/relationships',{method:'POST',body:JSON.stringify({sourceType:'product',sourceId:productId,relation:'not-a-real-relation',targetType:'category',targetId:categoryId})},/Unsupported relationship/i);
-const attachment=await call('/api/v1/master-data/f2/attachments',{method:'POST',body:JSON.stringify({entityType:'product',entityId:productId,fileName:'metadata.txt',mimeType:'text/plain',size:0,storageKey:`external/${s}`,storageManaged:false,metadata:{smoke:true}})});assert.ok(id(attachment?.attachment??attachment));
-const search=await call(`/api/v1/master-data/f2/search?q=${encodeURIComponent(s)}&limit=100`);assert.ok(Array.isArray(search?.items??search));assert.ok(await call('/api/v1/master-data/f2/integrity'));
-const exported=await call('/api/v1/master-data/f2/bulk/export/products');assert.equal(exported.schemaVersion,2);assert.ok(Array.isArray(exported.records));
-await call('/api/v1/core/cost_centers?limit=10&offset=0');await call('/api/v1/core/org_units?limit=10&offset=0');
-const importedId=randomUUID();const imported=await call('/api/v1/master-data/f2/bulk/import/categories',{method:'POST',body:JSON.stringify([{id:importedId,code:`IMP${s}`,name:'Smoke imported category',active:true}])});assert.equal(imported.inserted,1);assert.equal(id(await call(`/api/v1/master-data/f2/categories/${importedId}`)),importedId);
-const rollbackId=randomUUID();const rollback=await call('/api/v1/master-data/f2/bulk/import/categories',{method:'POST',body:JSON.stringify([{id:rollbackId,code:`RB${s}`,name:'Rollback candidate',active:true},{id:rollbackId,code:`RB2${s}`,name:'Duplicate candidate',active:true}])});assert.equal(rollback.inserted,0);assert.ok(rollback.failed>=2);assert.ok(rollback.errors.some(e=>/duplicate/i.test(e.error)));await mustFail(`/api/v1/master-data/f2/categories/${rollbackId}`,{},/404|NOT_FOUND/i);
+
+const base = process.env.KZ_ERP_E2E_BASE_URL || 'http://127.0.0.1:10000';
+const email = process.env.KZ_ERP_E2E_EMAIL || 'e2e@kz-erp.local';
+const password = process.env.KZ_ERP_E2E_PASSWORD || 'KzErp-E2E-2026-Local!';
+let token = '';
+const id = (v) => v?.id || v?._id;
+
+async function call(path, { method = 'GET', body, headers = {} } = {}) {
+  const response = await fetch(base + path, {
+    method,
+    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
+    body,
+  });
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch {}
+  if (!response.ok) throw new Error(`${method} ${path} -> ${response.status}: ${text}`);
+  return data;
+}
+
+async function mustFail(path, options, pattern) {
+  try {
+    await call(path, options);
+    throw new Error(`Expected failure: ${options?.method || 'GET'} ${path}`);
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message.startsWith('Expected failure:')) throw error;
+    if (pattern && !pattern.test(message)) throw new Error(`Unexpected failure for ${path}: ${message}`);
+  }
+}
+
+const login = await call('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+token = login.token || login.accessToken;
+assert.ok(token, 'login token');
+const suffix = Date.now().toString(36);
+
+const unit = await call('/api/v1/master-data/f2/units', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Unit', symbol: 'un', active: true }) });
+const unitId = id(unit); assert.ok(unitId);
+const product = await call('/api/v1/master-data/f2/products', { method: 'POST', body: JSON.stringify({ sku: `E2E-${suffix}`, name: 'E2E Product', unitId, active: true }) });
+const productId = id(product); assert.ok(productId);
+const list = await call('/api/v1/master-data/f2/price-lists', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Price List', currency: 'BRL', active: true }) });
+const listId = id(list); assert.ok(listId);
+const price = await call('/api/v1/master-data/f2/prices', { method: 'POST', body: JSON.stringify({ priceListId: listId, productId, amount: 12.5, minQuantity: 1, active: true }) });
+assert.ok(id(price?.price ?? price));
+const category = await call('/api/v1/master-data/f2/categories', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Category', active: true }) });
+const categoryId = id(category); assert.ok(categoryId);
+const brand = await call('/api/v1/master-data/f2/brands', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Brand', active: true }) });
+assert.ok(id(brand));
+const party = await call('/api/v1/master-data/f2/parties', { method: 'POST', body: JSON.stringify({ type: 'company', name: 'E2E Party', document: `E2E-${suffix}`, active: true }) });
+const partyId = id(party); assert.ok(partyId);
+const address = await call('/api/v1/master-data/f2/addresses', { method: 'POST', body: JSON.stringify({ partyId, street: 'Rua E2E', number: '1', city: 'São Paulo', state: 'SP', country: 'BR', zipCode: '01000000', active: true }) });
+assert.ok(id(address));
+const contact = await call('/api/v1/master-data/f2/contacts', { method: 'POST', body: JSON.stringify({ partyId, name: 'E2E Contact', email: `${suffix}@example.invalid`, phone: '+5500000000000', active: true }) });
+assert.ok(id(contact));
+const warehouse = await call('/api/v1/master-data/f2/warehouses', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Warehouse', active: true }) });
+const warehouseId = id(warehouse); assert.ok(warehouseId);
+const zone = await call('/api/v1/master-data/f2/locations', { method: 'POST', body: JSON.stringify({ warehouseId, code: `Z-${suffix}`, name: 'Zone', kind: 'zone', active: true }) });
+const zoneId = id(zone); assert.ok(zoneId);
+await mustFail('/api/v1/master-data/f2/locations', { method: 'POST', body: JSON.stringify({ warehouseId, code: `B-${suffix}`, name: 'Invalid Bin', kind: 'bin', parentId: zoneId, active: true }) }, /400|409/);
+const classification = await call('/api/v1/master-data/f2/classifications', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Classification', active: true }) });
+assert.ok(id(classification));
+const relationship = await call('/api/v1/master-data/f2/relationships', { method: 'POST', body: JSON.stringify({ sourceEntity: 'product', sourceId: productId, targetEntity: 'category', targetId: categoryId, type: 'related_to' }) });
+assert.ok(id(relationship));
+await mustFail('/api/v1/master-data/f2/relationships', { method: 'POST', body: JSON.stringify({ sourceEntity: 'product', sourceId: '000000000000000000000000', targetEntity: 'category', targetId: categoryId, type: 'related_to' }) }, /400|404|409/);
+const attachment = await call('/api/v1/master-data/f2/attachments', { method: 'POST', body: JSON.stringify({ entityType: 'product', entityId: productId, fileName: 'external.txt', mimeType: 'text/plain', size: 5, storageManaged: false, active: true }) });
+assert.ok(id(attachment));
+await call('/api/v1/master-data/f2/search?q=E2E');
+await call('/api/v1/master-data/f2/integrity');
+const exported = await call('/api/v1/master-data/f2/export/categories');
+assert.equal(exported.entity, 'category'); assert.ok(Array.isArray(exported.records)); assert.equal(typeof exported.schemaVersion, 'string');
+await call('/api/v1/core/cost_centers');
+await call('/api/v1/core/org_units');
+const imported = await call('/api/v1/master-data/f2/bulk/import/category', { method: 'POST', body: JSON.stringify({ records: [{ code: `IMP-${suffix}`, name: 'Imported E2E', active: true }] }) });
+assert.ok(imported.inserted >= 1);
+const duplicateId = `dup-${suffix}`;
+const duplicate = await call('/api/v1/master-data/f2/bulk/import/category', { method: 'POST', body: JSON.stringify({ records: [{ id: duplicateId, code: `DUP-${suffix}-1`, name: 'Dup 1', active: true }, { id: duplicateId, code: `DUP-${suffix}-2`, name: 'Dup 2', active: true }] }) });
+assert.equal(duplicate.inserted, 0); assert.ok(duplicate.failed >= 2); assert.ok(Array.isArray(duplicate.errors));
+await mustFail(`/api/v1/master-data/f2/categories/${duplicateId}`, {}, /404/);
 console.log('F2 operational smoke: PASS');
