@@ -16,7 +16,7 @@ const API=(import.meta.env.VITE_API_URL??'https://kz-erp.onrender.com').replace(
 function readSession():Session|null{try{const r=localStorage.getItem('kz-erp-session');return r?JSON.parse(r):null}catch{return null}}
 function saveSession(s:Session){localStorage.setItem('kz-erp-session',JSON.stringify(s))}
 function clearSession(){localStorage.removeItem('kz-erp-session')}
-function isBinaryBody(body:BodyInit|undefined){return body instanceof Blob || body instanceof ArrayBuffer || (typeof ArrayBuffer!=='undefined' && ArrayBuffer.isView(body))}
+function isBinaryBody(body:BodyInit|undefined){return body instanceof Blob || body instanceof ArrayBuffer}
 async function raw(path:string,options:RequestInit={},token?:string){const h=new Headers(options.headers);h.set('Accept','application/json');if(options.body!==undefined&&!isBinaryBody(options.body as BodyInit))h.set('Content-Type','application/json');if(token)h.set('Authorization',`Bearer ${token}`);return fetch(`${API}${path}`,{...options,headers:h})}
 async function parse<T>(r:Response):Promise<T>{const b=await r.json().catch(()=>null) as any;if(!r.ok)throw new Error(b?.error?.message??b?.error?.code??`HTTP ${r.status}`);return (b?.data??b) as T}
 async function publicApi<T>(path:string,options:RequestInit={}):Promise<T>{return parse<T>(await raw(path,options))}
