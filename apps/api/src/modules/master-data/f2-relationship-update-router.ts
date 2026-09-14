@@ -10,12 +10,9 @@ import { validateF2Reference, F2_RELATION_TYPES } from './f2-hardening.js';
 
 const id = z.string().uuid();
 const schema = z.object({
-  sourceType: z.string().trim().min(1).max(80),
-  sourceId: id,
-  relation: z.enum(F2_RELATION_TYPES),
-  targetType: z.string().trim().min(1).max(80),
-  targetId: id,
-  metadata: z.record(z.string(), z.unknown()).optional()
+  sourceType: z.string().trim().min(1).max(80), sourceId: id,
+  relation: z.enum(F2_RELATION_TYPES), targetType: z.string().trim().min(1).max(80),
+  targetId: id, metadata: z.record(z.string(), z.unknown()).optional()
 }).partial();
 
 type Actor = { id: string; companyId: string; role: Role };
@@ -41,32 +38,19 @@ export function f2RelationshipUpdateRouter(db: Db): Router {
       const targetError = await validateF2Reference(db, actor.companyId, targetType, targetId, 'Relationship target');
       if (sourceError || targetError) return fail(res, 422, 'VALIDATION_ERROR', sourceError ?? targetError!);
 
-      const next = {
-        ...input,
-        sourceType,
-        sourceId,
-        targetType,
-        targetId,
-        updatedAt: new Date()
-      };
+      const next = { ...input, sourceType, sourceId, targetType, targetId, updatedAt: new Date() };
       await collection.updateOne(actor.companyId, { _id: relationshipId }, { $set: next });
-      const updated = await collection.findOne(actor.companyId, { _id: relationshipId });
+      const updated: any = await collection.findOne(actor.companyId, { _id: relationshipId });
+      if (!updated) return fail(res, 404, 'NOT_FOUND');
+      const publicDoc: Record<string, any> = { ...updated };
+      delete publicDoc._id;
       await db.collection('audit_logs').insertOne({
-        _id: randomUUID(),
-        companyId: actor.companyId,
-        actorUserId: actor.id,
-        action: 'master-data.relationship.update',
-        resource: 'relationship',
-        resourceId: relationshipId,
-        metadata: { changed: Object.keys(input) },
-        createdAt: new Date(),
-        updatedAt: new Date()
+        _id: randomUUID(), companyId: actor.companyId, actorUserId: actor.id,
+        action: 'master-data.relationship.update', resource: 'relationship', resourceId: relationshipId,
+        metadata: { changed: Object.keys(input) }, createdAt: new Date(), updatedAt: new Date()
       });
-      const { _id, ...publicDoc } = updated!;
-      return ok(res, { relationship: { id: String(_id), ...publicDoc } });
-    } catch (error) {
-      next(error);
-    }
+      return ok(res, { relationship: { id: relationshipId, ...publicDoc } });
+    } catch (error) { next(error); }
   });
   return r;
 }
