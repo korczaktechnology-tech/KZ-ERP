@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import './styles.css';
+import './KorczakTheme.css';
 import { F1Admin } from './F1Admin';
 import { F2MasterData } from './F2MasterData';
 import { StockPage } from './StockPage';
