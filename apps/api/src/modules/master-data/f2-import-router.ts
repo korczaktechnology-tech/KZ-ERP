@@ -7,25 +7,27 @@ import { hasPermission, type Role } from '../../core/types.js';
 import { tenantCollection } from '../../core/db.js';
 import { fail, ok } from '../../core/api.js';
 import { importF2Batch } from './f2-import.js';
+import { F2_RELATION_TYPES } from './f2-hardening.js';
 
 const id = z.string().uuid();
-const base = z.object({ code: z.string().trim().min(1).max(80), name: z.string().trim().min(1).max(160), description: z.string().trim().max(2000).optional(), active: z.boolean().default(true) });
+const code = z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/);
+const base = z.object({ code, name: z.string().trim().min(1).max(160), description: z.string().trim().max(2000).optional(), active: z.boolean().default(true) });
 const withId = (shape: z.ZodRawShape): z.ZodObject<z.ZodRawShape> => z.object({ id: id.optional(), ...shape });
 const schemas: Record<string, z.ZodType> = {
-  products: withId({ sku: z.string().min(1).max(80), name: z.string().min(1).max(160), description: z.string().max(2000).optional(), unit: z.string().min(1).max(20), price: z.union([z.string(), z.number().finite().min(0)]), active: z.boolean().default(true) }),
-  parties: withId({ code: z.string().min(1).max(80), kind: z.enum(['person', 'company']), roles: z.array(z.string()).min(1).max(5), name: z.string().min(1).max(160), legalName: z.string().max(200).optional(), document: z.string().max(40).optional(), email: z.string().email().max(320).optional(), phone: z.string().max(40).optional(), active: z.boolean().default(true) }),
-  addresses: withId({ partyId: id, code: z.string().min(1).max(80), type: z.string().min(1).max(40), postalCode: z.string().min(3).max(20), street: z.string().min(1).max(160), number: z.string().min(1).max(30), district: z.string().min(1).max(120), city: z.string().min(1).max(120), state: z.string().min(1).max(120), country: z.string().min(2).max(80).default('BR'), active: z.boolean().default(true) }),
-  units: withId({ code: z.string().min(1).max(20), name: z.string().min(1).max(80), symbol: z.string().min(1).max(12), kind: z.string().min(1).max(30), decimalPlaces: z.number().int().min(0).max(6).default(0), active: z.boolean().default(true) }),
-  price_lists: withId({ code: z.string().min(1).max(40), name: z.string().min(1).max(120), currency: z.string().regex(/^[A-Z]{3}$/), active: z.boolean().default(true) }),
-  prices: withId({ priceListId: id, productId: id, amount: z.union([z.string(), z.number().finite().min(0)]), minQuantity: z.number().int().positive().default(1), active: z.boolean().default(true) }),
-  warehouses: withId({ code: z.string().min(1).max(80), name: z.string().min(1).max(160), active: z.boolean().default(true) }),
+  products: withId({ sku: z.string().trim().min(1).max(80), name: z.string().trim().min(1).max(160), description: z.string().trim().max(2000).optional(), unit: z.string().trim().min(1).max(20), price: z.union([z.string().trim().regex(/^\d+(?:\.\d{1,6})?$/), z.number().finite().min(0).max(1_000_000_000)]), active: z.boolean().default(true) }),
+  parties: withId({ code, kind: z.enum(['person', 'company']), roles: z.array(z.enum(['customer', 'supplier', 'contact', 'carrier', 'other'])).min(1).max(5), name: z.string().trim().min(1).max(160), legalName: z.string().trim().max(200).optional(), document: z.string().trim().max(40).optional(), email: z.string().email().max(320).optional(), phone: z.string().trim().max(40).optional(), active: z.boolean().default(true) }),
+  addresses: withId({ partyId: id, code, type: z.enum(['billing', 'shipping', 'commercial', 'residential', 'other']), label: z.string().trim().max(120).optional(), recipientName: z.string().trim().max(160).optional(), postalCode: z.string().trim().min(3).max(20), street: z.string().trim().min(1).max(160), number: z.string().trim().min(1).max(30), complement: z.string().trim().max(120).optional(), district: z.string().trim().min(1).max(120), city: z.string().trim().min(1).max(120), state: z.string().trim().min(1).max(120), country: z.string().trim().min(2).max(80).default('BR'), active: z.boolean().default(true) }),
+  units: withId({ code: z.string().trim().regex(/^[A-Za-z0-9_-]+$/).max(20), name: z.string().trim().min(1).max(80), symbol: z.string().trim().min(1).max(12), kind: z.enum(['unit', 'weight', 'volume', 'length', 'area', 'time', 'other']), decimalPlaces: z.number().int().min(0).max(6).default(0), active: z.boolean().default(true) }),
+  price_lists: withId({ code: z.string().trim().min(1).max(40), name: z.string().trim().min(1).max(120), currency: z.string().trim().regex(/^[A-Z]{3}$/), validFrom: z.coerce.date().optional(), validUntil: z.coerce.date().optional(), active: z.boolean().default(true) }).refine(v => !v.validUntil || !v.validFrom || v.validUntil >= v.validFrom, { message: 'validUntil must be on or after validFrom', path: ['validUntil'] }),
+  prices: withId({ priceListId: id, productId: id, amount: z.union([z.string().trim().regex(/^\d+(?:\.\d{1,6})?$/), z.number().finite().min(0).max(1_000_000_000)]), minQuantity: z.number().int().positive().max(1_000_000).default(1), active: z.boolean().default(true) }),
+  warehouses: withId({ code, name: z.string().trim().min(1).max(160), active: z.boolean().default(true) }),
   categories: withId({ ...base.shape, parentId: id.optional() }),
   brands: withId({ ...base.shape }),
   contacts: withId({ partyId: id, name: z.string().trim().min(1).max(160), role: z.string().trim().max(80).optional(), email: z.string().email().max(320).optional(), phone: z.string().trim().max(40).optional(), mobile: z.string().trim().max(40).optional(), active: z.boolean().default(true) }),
   locations: withId({ ...base.shape, warehouseId: id, parentId: id.optional(), kind: z.enum(['zone', 'aisle', 'rack', 'shelf', 'bin']), capacity: z.number().finite().nonnegative().max(1e12).optional() }),
   classifications: withId({ ...base.shape, type: z.string().trim().min(1).max(80), parentId: id.optional() }),
   attachments: withId({ entityType: z.string().trim().min(1).max(80), entityId: id, fileName: z.string().trim().min(1).max(255), mimeType: z.string().trim().min(1).max(160), size: z.number().int().nonnegative().max(50_000_000), storageKey: z.string().trim().min(1).max(500), storageManaged: z.boolean().default(false), checksum: z.string().trim().max(128).optional(), metadata: z.record(z.string(), z.unknown()).optional() }),
-  relationships: withId({ sourceType: z.string().trim().min(1).max(80), sourceId: id, relation: z.string().trim().min(1).max(80), targetType: z.string().trim().min(1).max(80), targetId: id, metadata: z.record(z.string(), z.unknown()).optional() }),
+  relationships: withId({ sourceType: z.string().trim().min(1).max(80), sourceId: id, relation: z.enum(F2_RELATION_TYPES), targetType: z.string().trim().min(1).max(80), targetId: id, metadata: z.record(z.string(), z.unknown()).optional() }),
 };
 
 type Actor = { id: string; companyId: string; role: Role };
