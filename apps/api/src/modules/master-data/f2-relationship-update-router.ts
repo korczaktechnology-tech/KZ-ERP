@@ -29,7 +29,6 @@ export function f2RelationshipUpdateRouter(db: Db): Router {
       const collection = tenantCollection<any>(db, 'master_relationships');
       const current = await collection.findOne(actor.companyId, { _id: relationshipId });
       if (!current) return fail(res, 404, 'NOT_FOUND');
-
       const sourceType = input.sourceType ?? current.sourceType;
       const sourceId = input.sourceId ?? current.sourceId;
       const targetType = input.targetType ?? current.targetType;
@@ -37,14 +36,13 @@ export function f2RelationshipUpdateRouter(db: Db): Router {
       const sourceError = await validateF2Reference(db, actor.companyId, sourceType, sourceId, 'Relationship source');
       const targetError = await validateF2Reference(db, actor.companyId, targetType, targetId, 'Relationship target');
       if (sourceError || targetError) return fail(res, 422, 'VALIDATION_ERROR', sourceError ?? targetError!);
-
       const next = { ...input, sourceType, sourceId, targetType, targetId, updatedAt: new Date() };
       await collection.updateOne(actor.companyId, { _id: relationshipId }, { $set: next });
       const updated: any = await collection.findOne(actor.companyId, { _id: relationshipId });
       if (!updated) return fail(res, 404, 'NOT_FOUND');
       const publicDoc: Record<string, any> = { ...updated };
       delete publicDoc._id;
-      await db.collection('audit_logs').insertOne({
+      await db.collection<any>('audit_logs').insertOne({
         _id: randomUUID(), companyId: actor.companyId, actorUserId: actor.id,
         action: 'master-data.relationship.update', resource: 'relationship', resourceId: relationshipId,
         metadata: { changed: Object.keys(input) }, createdAt: new Date(), updatedAt: new Date()
