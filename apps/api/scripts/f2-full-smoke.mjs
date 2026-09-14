@@ -70,6 +70,7 @@ const classification = await call('/api/v1/master-data/f2/classifications', { me
 assert.ok(id(classification));
 const relationship = await call('/api/v1/master-data/f2/relationships', { method: 'POST', body: JSON.stringify({ sourceType: 'product', sourceId: productId, targetType: 'category', targetId: categoryId, relation: 'related_to' }) });
 assert.ok(id(relationship));
+await call(`/api/v1/master-data/f2/relationships/${id(relationship)}`, { method: 'PATCH', body: JSON.stringify({ relation: 'associated_with' }) });
 await mustFail('/api/v1/master-data/f2/relationships', { method: 'POST', body: JSON.stringify({ sourceType: 'product', sourceId: '00000000-0000-4000-8000-000000000000', targetType: 'category', targetId: categoryId, relation: 'related_to' }) }, /400|404|409|422/);
 
 const attachment = await call('/api/v1/master-data/f2/attachments', { method: 'POST', body: JSON.stringify({ entityType: 'product', entityId: productId, fileName: 'external.txt', mimeType: 'text/plain', size: 5, storageKey: `external/${suffix}/external.txt`, active: true }) });
@@ -79,8 +80,8 @@ const integrity = await call('/api/v1/master-data/f2/integrity');
 assert.equal(integrity.healthy, true);
 const exported = await call('/api/v1/master-data/f2/bulk/export/categories');
 assert.equal(exported.entity, 'categories'); assert.ok(Array.isArray(exported.records)); assert.equal(typeof exported.schemaVersion, 'number');
-await call('/api/v1/core/cost_centers');
-await call('/api/v1/core/org_units');
+await call('/api/v1/master-data/f2/cost-centers');
+await call('/api/v1/master-data/f2/org-units');
 
 const imported = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify([{ code: `IMP-${suffix}`, name: 'Imported E2E', active: true }]) });
 assert.ok(imported.inserted >= 1);
