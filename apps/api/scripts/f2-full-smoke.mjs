@@ -8,7 +8,15 @@ assert.ok(base, 'KZ_ERP_API_URL must be configured');
 assert.ok(email, 'KZ_ERP_E2E_EMAIL must be configured');
 assert.ok(password, 'KZ_ERP_E2E_PASSWORD must be configured');
 let token = '';
-const id = (v) => v?.id || v?._id;
+
+const id = (value) => {
+  if (!value || typeof value !== 'object') return undefined;
+  if (value.id || value._id) return value.id || value._id;
+  for (const child of Object.values(value)) {
+    if (child && typeof child === 'object' && (child.id || child._id)) return child.id || child._id;
+  }
+  return undefined;
+};
 
 async function call(path, { method = 'GET', body, headers = {} } = {}) {
   const response = await fetch(base + path, {
