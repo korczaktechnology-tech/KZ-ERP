@@ -72,16 +72,17 @@ await mustFail('/api/v1/master-data/f2/relationships', { method: 'POST', body: J
 const attachment = await call('/api/v1/master-data/f2/attachments', { method: 'POST', body: JSON.stringify({ entityType: 'product', entityId: productId, fileName: 'external.txt', mimeType: 'text/plain', size: 5, storageKey: `external/${suffix}/external.txt`, active: true }) });
 assert.ok(id(attachment));
 await call('/api/v1/master-data/f2/search?q=E2E');
-await call('/api/v1/master-data/f2/integrity');
+const integrity = await call('/api/v1/master-data/f2/integrity');
+assert.equal(integrity.healthy, true);
 const exported = await call('/api/v1/master-data/f2/bulk/export/categories');
 assert.equal(exported.entity, 'categories'); assert.ok(Array.isArray(exported.records)); assert.equal(typeof exported.schemaVersion, 'number');
 await call('/api/v1/core/cost_centers');
 await call('/api/v1/core/org_units');
 
-const imported = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify({ records: [{ code: `IMP-${suffix}`, name: 'Imported E2E', active: true }] }) });
+const imported = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify([{ code: `IMP-${suffix}`, name: 'Imported E2E', active: true }]) });
 assert.ok(imported.inserted >= 1);
 const duplicateId = `dup-${suffix}`;
-const duplicate = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify({ records: [{ id: duplicateId, code: `DUP-${suffix}-1`, name: 'Dup 1', active: true }, { id: duplicateId, code: `DUP-${suffix}-2`, name: 'Dup 2', active: true }] }) });
+const duplicate = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify([{ id: duplicateId, code: `DUP-${suffix}-1`, name: 'Dup 1', active: true }, { id: duplicateId, code: `DUP-${suffix}-2`, name: 'Dup 2', active: true }]) });
 assert.equal(duplicate.inserted, 0); assert.ok(duplicate.failed >= 2); assert.ok(Array.isArray(duplicate.errors)); assert.ok(duplicate.errors.some((error) => /Duplicate id/.test(error.error)));
 await mustFail(`/api/v1/master-data/f2/categories/${duplicateId}`, {}, /404/);
 console.log('F2 operational smoke: PASS');
