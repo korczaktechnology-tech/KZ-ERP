@@ -1,18 +1,23 @@
-// @ts-nocheck
-import type { Db } from 'mongodb';
+import type { Db, Document, InsertOneResult } from 'mongodb';
 import { randomUUID } from 'node:crypto';
 import type { ZodType } from 'zod';
 import { F2_ENTITY_COLLECTIONS, f2EntityCollection, validateF2Reference, validLocationParentKind } from './f2-hardening.js';
 
 export type F2ImportResult = { inserted: number; failed: number; errors: Array<{ index: number; error: string }> };
 type ImportRecord = Record<string, unknown> & { id?: string };
-type ImportOptions = { db: Db; companyId: string; entity: string; records: unknown[]; schema: ZodType; collection: any };
+type TenantCollection<T extends Document & { companyId: string }> = {
+  findOne: (companyId: string, filter?: Record<string, unknown>) => Promise<T | null>;
+  find: (companyId: string, filter?: Record<string, unknown>) => { toArray: () => Promise<T[]> };
+  insertOne: (companyId: string, document: Omit<T, 'companyId'> & Partial<Pick<T, 'companyId'>>) => Promise<InsertOneResult<T>>;
+};
+type ImportOptions = { db: Db; companyId: string; entity: string; records: unknown[]; schema: ZodType; collection: TenantCollection<ImportDocument> };
+type ImportDocument = Document & { _id: string; companyId: string; createdAt: Date; updatedAt: Date; [key: string]: unknown };
 const ENTITY_TYPE: Record<string, string> = { products: 'product', parties: 'party', addresses: 'address', units: 'unit', price_lists: 'price_list', prices: 'price', warehouses: 'warehouse', categories: 'category', brands: 'brand', contacts: 'contact', locations: 'location', classifications: 'classification' };
 function asId(value: unknown): string | undefined { return typeof value === 'string' && value.length > 0 ? value : undefined; }
 function batchId(record: ImportRecord): string { return asId(record.id) ?? randomUUID(); }
 function logicalType(entity: string): string { return ENTITY_TYPE[entity] ?? entity; }
 function detectParentCycle(parentById: Map<string, string | undefined>, id: string): boolean { const seen = new Set<string>([id]); let current = parentById.get(id); while (current) { if (seen.has(current)) return true; seen.add(current); current = parentById.get(current); } return false; }
-async function existingIds(db: Db, companyId: string, type: string): Promise<Set<string>> { const collection = f2EntityCollection(db, type); if (!collection) return new Set(); const rows = await collection.find({ companyId }, { projection: { _id: 1 } }).toArray(); return new Set(rows.map((row: any) => String(row._id))); }
+async function existingIds(db: Db, companyId: string, type: string): Promise<Set<string>> { const collection = f2EntityCollection(db, type); if (!collection) return new Set(); const rows = await collection.find({ companyId }, { projection: { _id: 1 } }).toArray(); return new Set(rows.map((row: Document) => String(row._id))); }
 async function referenceExists(db: Db, companyId: string, type: string, id: string, batchIds: Set<string>, sameEntity: boolean): Promise<boolean> { if (sameEntity && batchIds.has(id)) return true; return (await validateF2Reference(db, companyId, type, id)) === null; }
 async function validateRecord(db: Db, companyId: string, entity: string, record: ImportRecord, batchIds: Set<string>, parentById: Map<string, string | undefined>, kindById: Map<string, string>, warehouseById: Map<string, string>): Promise<string | null> {
   if (entity === 'products') { const unitCode = typeof record.unit === 'string' ? record.unit : undefined; if (!unitCode || !await db.collection(F2_ENTITY_COLLECTIONS.unit).findOne({ companyId, code: unitCode }, { projection: { _id: 1 } })) return `Unit '${String(record.unit)}' not found`; }
