@@ -10,5 +10,4 @@ import './FinancePremium.css';
 import './PreparedPremium.css';
 import './GlobalPremium.css';
 import './FinalUIPolish.css';
-import './F2UserExperience';
 mount();
