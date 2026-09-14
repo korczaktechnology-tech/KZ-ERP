@@ -84,7 +84,7 @@ await call('/api/v1/core/org_units');
 
 const imported = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify([{ code: `IMP-${suffix}`, name: 'Imported E2E', active: true }]) });
 assert.ok(imported.inserted >= 1);
-const duplicateId = `dup-${suffix}`;
+const duplicateId = crypto.randomUUID();
 const duplicate = await call('/api/v1/master-data/f2/bulk/import/categories', { method: 'POST', body: JSON.stringify([{ id: duplicateId, code: `DUP-${suffix}-1`, name: 'Dup 1', active: true }, { id: duplicateId, code: `DUP-${suffix}-2`, name: 'Dup 2', active: true }]) });
 assert.equal(duplicate.inserted, 0); assert.ok(duplicate.failed >= 2); assert.ok(Array.isArray(duplicate.errors)); assert.ok(duplicate.errors.some((error) => /Duplicate id/.test(error.error)));
 await mustFail(`/api/v1/master-data/f2/categories/${duplicateId}`, {}, /404/);
