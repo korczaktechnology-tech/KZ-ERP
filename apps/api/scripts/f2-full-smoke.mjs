@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 
 const base = process.env.KZ_ERP_API_URL || process.env.KZ_ERP_E2E_BASE_URL;
-const email = process.env.KZ_ERP_E2E_EMAIL || 'e2e@kz-erp.local';
-const password = process.env.KZ_ERP_E2E_PASSWORD || 'KzErp-E2E-2026-Local!';
+const email = process.env.KZ_ERP_E2E_EMAIL;
+const password = process.env.KZ_ERP_E2E_PASSWORD;
+const companySlug = process.env.KZ_ERP_E2E_COMPANY_SLUG || '';
 assert.ok(base, 'KZ_ERP_API_URL must be configured');
+assert.ok(email, 'KZ_ERP_E2E_EMAIL must be configured');
+assert.ok(password, 'KZ_ERP_E2E_PASSWORD must be configured');
 let token = '';
 const id = (v) => v?.id || v?._id;
 
@@ -17,7 +20,7 @@ async function call(path, { method = 'GET', body, headers = {} } = {}) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch {}
   if (!response.ok) throw new Error(`${method} ${path} -> ${response.status}: ${text}`);
-  return data;
+  return data?.data ?? data;
 }
 
 async function mustFail(path, options, pattern) {
@@ -31,14 +34,14 @@ async function mustFail(path, options, pattern) {
   }
 }
 
-const login = await call('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
-token = login.token || login.accessToken;
+const login = await call('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ email, password, ...(companySlug ? { companySlug } : {}) }) });
+token = login?.token || login?.accessToken;
 assert.ok(token, 'login token');
 const suffix = Date.now().toString(36);
 
 const unit = await call('/api/v1/master-data/units', { method: 'POST', body: JSON.stringify({ code: `E2E_${suffix}`, name: 'E2E Unit', symbol: 'un', kind: 'unit', decimalPlaces: 0, active: true }) });
 const unitId = id(unit); assert.ok(unitId);
-const unitCode = unit.unit?.code || `E2E_${suffix}`;
+const unitCode = unit.unit?.code || unit.code || `E2E_${suffix}`;
 const product = await call('/api/v1/master-data/products', { method: 'POST', body: JSON.stringify({ sku: `E2E-${suffix}`, name: 'E2E Product', unit: unitCode, price: '12.500000', active: true }) });
 const productId = id(product); assert.ok(productId);
 const list = await call('/api/v1/master-data/price-lists', { method: 'POST', body: JSON.stringify({ code: `E2E-${suffix}`, name: 'E2E Price List', currency: 'BRL', active: true }) });
