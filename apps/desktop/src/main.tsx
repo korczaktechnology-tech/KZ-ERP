@@ -11,4 +11,5 @@ import './PreparedPremium.css';
 import './GlobalPremium.css';
 import './FinalUIPolish.css';
 import './F2MasterDataProfessional.css';
+import './ConfigurationTerminology.css';
 mount();
