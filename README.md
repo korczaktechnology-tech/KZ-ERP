@@ -1,5 +1,5 @@
 # KORCZAK ERP
-
+  
 Desktop ERP da Korczak Technologies para Linux.
 
 ## Estado da arquitetura
