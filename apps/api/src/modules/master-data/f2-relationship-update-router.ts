@@ -63,7 +63,7 @@ export function f2RelationshipUpdateRouter(db: Db): Router {
         updatedAt: new Date()
       });
       const { _id, ...publicDoc } = updated!;
-      return ok(res, { relationship: { id: _id, ...publicDoc } });
+      return ok(res, { relationship: { id: String(_id), ...publicDoc } });
     } catch (error) {
       next(error);
     }
