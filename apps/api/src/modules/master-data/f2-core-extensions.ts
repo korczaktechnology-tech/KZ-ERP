@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from 'mongodb';
 import { Router } from 'express';
+import { z } from 'zod';
 import { requireAuth } from '../../core/auth.js';
 import { hasPermission, type Role } from '../../core/types.js';
 import { tenantCollection } from '../../core/db.js';
@@ -9,47 +10,10 @@ import { wouldCreateCycle } from './f2-hardening.js';
 
 type Actor = { id: string; companyId: string; role: Role };
 type Doc = { _id: string; companyId: string; createdAt: Date; updatedAt: Date; [key: string]: unknown };
-
-const base = z.object({
-  code: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
-  name: z.string().trim().min(1).max(160),
-  description: z.string().trim().max(2000).optional(),
-  active: z.boolean().default(true)
-});
-const schemas = {
-  costCenter: base.extend({ parentId: z.string().uuid().optional() }),
-  orgUnit: base.extend({ parentId: z.string().uuid().optional(), type: z.string().trim().min(1).max(80).default('unit') })
-};
+const base = z.object({ code: z.string().trim().min(1).max(80).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/), name: z.string().trim().min(1).max(160), description: z.string().trim().max(2000).optional(), active: z.boolean().default(true) });
+const schemas = { costCenter: base.extend({ parentId: z.string().uuid().optional() }), orgUnit: base.extend({ parentId: z.string().uuid().optional(), type: z.string().trim().min(1).max(80).default('unit') }) };
 const actor = (res: any): Actor => res.locals.user as Actor;
-const pub = (doc: Doc | null) => {
-  if (!doc) return doc;
-  const { _id, ...rest } = doc;
-  return { id: _id, ...rest };
-};
-async function audit(db: Db, user: Actor, action: string, resource: string, resourceId: string) {
-  await db.collection<any>('audit_logs').insertOne({ _id: randomUUID(), companyId: user.companyId, actorUserId: user.id, action, resource, resourceId, createdAt: new Date() });
-}
-export async function ensureF2CoreCollections(db: Db) {
-  for (const name of ['cost_centers', 'org_units']) {
-    try { await db.collection(name).createIndex({ companyId: 1, code: 1 }, { unique: true, name: `${name}_company_code_unique` }); }
-    catch (error) { const code = (error as { code?: number }).code; if (code !== 85) throw error; }
-    await db.collection(name).createIndex({ companyId: 1, parentId: 1 });
-  }
-}
-export function f2CoreExtensionsRouter(db: Db): Router {
-  const r = Router(); r.use(requireAuth);
-  const configs = {
-    costCenters: { path: 'cost-centers', collection: 'cost_centers', schema: schemas.costCenter },
-    orgUnits: { path: 'org-units', collection: 'org_units', schema: schemas.orgUnit }
-  } as const;
-  for (const config of Object.values(configs)) {
-    const c = tenantCollection<Doc>(db, config.collection); const raw = db.collection<Doc>(config.collection);
-    r.get(`/${config.path}`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN'); const p = parsePagination(req.query); const [items, total] = await Promise.all([c.find(user.companyId, {}).sort({ createdAt: -1 }).skip(p.offset).limit(p.limit).toArray(), c.find(user.companyId, {}).count()]); return paginated(res, items.map(pub), total, p); } catch (error) { return next(error); } });
-    r.get(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN'); const doc = await c.findOne(user.companyId, { _id: String(req.params.id) }); if (!doc) return fail(res, 404, 'NOT_FOUND'); return ok(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } });
-    r.post(`/${config.path}`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const input = config.schema.parse(req.body); const id = randomUUID(); if (input.parentId) { const parent = await c.findOne(user.companyId, { _id: input.parentId }); if (!parent) return fail(res, 422, 'VALIDATION_ERROR', 'Parent not found'); if (await wouldCreateCycle(raw, user.companyId, id, input.parentId)) return fail(res, 422, 'VALIDATION_ERROR', 'Hierarchy cycle detected'); } const now = new Date(); const doc: Doc = { _id: id, companyId: user.companyId, ...input, createdAt: now, updatedAt: now }; await c.insertOne(user.companyId, doc); await audit(db, user, `master-data.${config.collection}.create`, config.collection, id); return created(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } });
-    r.patch(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const id = String(req.params.id); const existing = await c.findOne(user.companyId, { _id: id }); if (!existing) return fail(res, 404, 'NOT_FOUND'); const input = config.schema.partial().parse(req.body); const existingParentId = typeof existing.parentId === 'string' ? existing.parentId : undefined; const parentId = input.parentId === undefined ? existingParentId : input.parentId; if (parentId) { const parent = await c.findOne(user.companyId, { _id: parentId }); if (!parent) return fail(res, 422, 'VALIDATION_ERROR', 'Parent not found'); if (await wouldCreateCycle(raw, user.companyId, id, parentId)) return fail(res, 422, 'VALIDATION_ERROR', 'Hierarchy cycle detected'); } await c.updateOne(user.companyId, { _id: id }, { $set: { ...input, updatedAt: new Date() } }); const doc = await c.findOne(user.companyId, { _id: id }); await audit(db, user, `master-data.${config.collection}.update`, config.collection, id); return ok(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } });
-    r.delete(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const id = String(req.params.id); const result = await c.updateOne(user.companyId, { _id: id, active: true }, { $set: { active: false, updatedAt: new Date() } }); if (!result.matchedCount) return fail(res, 404, 'NOT_FOUND'); await audit(db, user, `master-data.${config.collection}.deactivate`, config.collection, id); return noContent(res); } catch (error) { return next(error); } });
-  }
-  void ensureF2CoreCollections(db).catch(error => console.error('F2 organizational collection initialization failed', error));
-  return r;
-}
+const pub = (doc: Doc | null) => { if (!doc) return doc; const { _id, ...rest } = doc; return { id: _id, ...rest }; };
+async function audit(db: Db, user: Actor, action: string, resource: string, resourceId: string) { await db.collection<any>('audit_logs').insertOne({ _id: randomUUID(), companyId: user.companyId, actorUserId: user.id, action, resource, resourceId, createdAt: new Date() }); }
+export async function ensureF2CoreCollections(db: Db) { for (const name of ['cost_centers', 'org_units']) { try { await db.collection(name).createIndex({ companyId: 1, code: 1 }, { unique: true, name: `${name}_company_code_unique` }); } catch (error) { const code = (error as { code?: number }).code; if (code !== 85) throw error; } await db.collection(name).createIndex({ companyId: 1, parentId: 1 }); } }
+export function f2CoreExtensionsRouter(db: Db): Router { const r = Router(); r.use(requireAuth); const configs = { costCenters: { path: 'cost-centers', collection: 'cost_centers', schema: schemas.costCenter }, orgUnits: { path: 'org-units', collection: 'org_units', schema: schemas.orgUnit } } as const; for (const config of Object.values(configs)) { const c = tenantCollection<Doc>(db, config.collection); const raw = db.collection<Doc>(config.collection); r.get(`/${config.path}`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN'); const p = parsePagination(req.query); const [items, total] = await Promise.all([c.find(user.companyId, {}).sort({ createdAt: -1 }).skip(p.offset).limit(p.limit).toArray(), c.find(user.companyId, {}).count()]); return paginated(res, items.map(pub), total, p); } catch (error) { return next(error); } }); r.get(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:read')) return fail(res, 403, 'FORBIDDEN'); const doc = await c.findOne(user.companyId, { _id: String(req.params.id) }); if (!doc) return fail(res, 404, 'NOT_FOUND'); return ok(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } }); r.post(`/${config.path}`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const input = config.schema.parse(req.body); const id = randomUUID(); if (input.parentId) { const parent = await c.findOne(user.companyId, { _id: input.parentId }); if (!parent) return fail(res, 422, 'VALIDATION_ERROR', 'Parent not found'); if (await wouldCreateCycle(raw, user.companyId, id, input.parentId)) return fail(res, 422, 'VALIDATION_ERROR', 'Hierarchy cycle detected'); } const now = new Date(); const doc: Doc = { _id: id, companyId: user.companyId, ...input, createdAt: now, updatedAt: now }; await c.insertOne(user.companyId, doc); await audit(db, user, `master-data.${config.collection}.create`, config.collection, id); return created(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } }); r.patch(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const id = String(req.params.id); const existing = await c.findOne(user.companyId, { _id: id }); if (!existing) return fail(res, 404, 'NOT_FOUND'); const input = config.schema.partial().parse(req.body); const existingParentId = typeof existing.parentId === 'string' ? existing.parentId : undefined; const parentId = input.parentId === undefined ? existingParentId : input.parentId; if (parentId) { const parent = await c.findOne(user.companyId, { _id: parentId }); if (!parent) return fail(res, 422, 'VALIDATION_ERROR', 'Parent not found'); if (await wouldCreateCycle(raw, user.companyId, id, parentId)) return fail(res, 422, 'VALIDATION_ERROR', 'Hierarchy cycle detected'); } await c.updateOne(user.companyId, { _id: id }, { $set: { ...input, updatedAt: new Date() } }); const doc = await c.findOne(user.companyId, { _id: id }); await audit(db, user, `master-data.${config.collection}.update`, config.collection, id); return ok(res, { [config.collection]: pub(doc) }); } catch (error) { return next(error); } }); r.delete(`/${config.path}/:id`, async (req, res, next) => { try { const user = actor(res); if (!hasPermission(user.role, 'master-data:write')) return fail(res, 403, 'FORBIDDEN'); const id = String(req.params.id); const result = await c.updateOne(user.companyId, { _id: id, active: true }, { $set: { active: false, updatedAt: new Date() } }); if (!result.matchedCount) return fail(res, 404, 'NOT_FOUND'); await audit(db, user, `master-data.${config.collection}.deactivate`, config.collection, id); return noContent(res); } catch (error) { return next(error); } }); } void ensureF2CoreCollections(db).catch(error => console.error('F2 organizational collection initialization failed', error)); return r; }
