@@ -1,0 +1,18 @@
+:root{--kz-blue:#1976ff;--kz-blue-strong:#2f8cff;--kz-bg:#07111f;--kz-panel:#0b1728;--kz-panel-2:#0e1d31;--kz-border:rgba(112,151,201,.18);--kz-text:#eef5ff;--kz-muted:#8fa5c0}
+*{box-sizing:border-box}
+button,input,select,textarea{font:inherit}
+button{transition:background .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+button:not(:disabled):hover{transform:translateY(-1px)}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid rgba(47,140,255,.8);outline-offset:2px}
+button:disabled{cursor:not-allowed;opacity:.55}
+[data-kz-modal],.modal,.dialog{backdrop-filter:blur(10px)}
+table{border-collapse:separate;border-spacing:0}
+thead th{position:sticky;top:0;z-index:2;background:var(--kz-panel-2)}
+tbody tr{transition:background .14s ease}
+tbody tr:hover{background:rgba(25,118,255,.055)}
+::selection{background:rgba(25,118,255,.28);color:var(--kz-text)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(112,151,201,.24);border-radius:99px}
+::-webkit-scrollbar-thumb:hover{background:rgba(47,140,255,.42)}
+@media(max-width:900px){.kz-responsive-grid{grid-template-columns:1fr!important}.kz-responsive-table{overflow-x:auto}.kz-responsive-actions{flex-wrap:wrap}}
