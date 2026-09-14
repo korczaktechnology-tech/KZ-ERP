@@ -1,0 +1,37 @@
+/* Final enterprise UI pass: layout safety, form consistency, search clarity and configuration terminology. */
+:root{--kz-surface:#06182b;--kz-surface-2:#04111f;--kz-border:#123b5f;--kz-text:#e7f3ff;--kz-muted:#6687a2;--kz-blue:#168dff;}
+*,*::before,*::after{box-sizing:border-box}
+button,input,select,textarea{font:inherit}
+button{min-height:34px}
+input,select,textarea{max-width:100%;outline:none}
+input:focus,select:focus,textarea:focus{border-color:#168dff!important;box-shadow:0 0 0 3px rgba(22,141,255,.11)!important}
+.f2-pro{min-width:0;overflow:visible}
+.f2-pro-head,.f2-pro-toolbar,.f2-pro-card-head,.f2-pro-form-actions,.f2-pro-head-actions,.f2-pro-card-actions{min-width:0}
+.f2-pro-search{align-items:center;min-width:280px}
+.f2-pro-search input{min-width:0;height:38px}
+.f2-pro-search button{flex:0 0 auto;white-space:nowrap}
+.f2-pro-form-grid{align-items:start}
+.f2-pro-field{min-width:0}
+.f2-pro-field input,.f2-pro-field select,.f2-pro-field textarea{min-width:0;display:block;box-sizing:border-box}
+.f2-pro-field textarea{overflow:auto;overflow-wrap:anywhere}
+.f2-pro-form-actions{position:sticky;bottom:0;margin:0 -18px -18px;padding:12px 18px;background:linear-gradient(180deg,rgba(4,17,31,.72),#04111f 45%);backdrop-filter:blur(10px);z-index:4;border-top:1px solid #0d2c48}
+.f2-pro-table{max-width:100%;overflow-x:auto;overflow-y:visible;scrollbar-gutter:stable}
+.f2-pro-table table{min-width:900px}
+.f2-pro-table th:last-child,.f2-pro-table td:last-child{position:sticky;right:0;background:#06182b;z-index:2}
+.f2-pro-table tbody tr:hover td:last-child{background:#08233d}
+.f2-pro-actions{white-space:nowrap}
+.f2-pro-tool-panel pre,.f2-pro-io textarea{overflow:auto;overflow-wrap:anywhere}
+.f1-admin .module-intro h2{font-size:0}
+.f1-admin .module-intro h2::after{content:'Configurações';font-size:28px;letter-spacing:-1.1px;color:#eef7ff}
+.f1-admin .module-intro .tag{letter-spacing:1.4px}
+.f1-admin .subnav{overflow-x:auto;scrollbar-width:thin}
+.f1-admin .subnav button{white-space:nowrap}
+.f1-admin .table-wrap{max-width:100%;overflow-x:auto}
+.f1-admin table{min-width:760px}
+.f1-admin .panel,.f1-admin .data-page{min-width:0;overflow:hidden}
+.f1-admin form{min-width:0}
+.f1-admin label{min-width:0}
+.f1-admin label input,.f1-admin label select,.f1-admin label textarea{width:100%;min-width:0;box-sizing:border-box}
+@media(max-width:1050px){.f2-pro-search{min-width:220px}.f2-pro-form-grid{grid-template-columns:1fr 1fr}.f1-admin .f1-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.f2-pro-search{min-width:100%;order:10}.f2-pro-form-grid{grid-template-columns:1fr}.f2-pro-form-actions{position:static}.f1-admin .subnav{padding-bottom:4px}.f1-admin table{min-width:680px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
