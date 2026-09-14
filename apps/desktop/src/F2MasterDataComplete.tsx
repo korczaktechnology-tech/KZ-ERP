@@ -17,8 +17,8 @@ const resources:Resource[]=[
   {key:'warehouses',label:'Armazéns',title:'Armazéns',importable:true},
   {key:'locations',label:'Estrutura física',title:'Estrutura física do armazém',importable:true},
   {key:'classifications',label:'Classificações',title:'Classificações auxiliares',importable:true},
-  {key:'cost_centers',label:'Centros de custo',title:'Centros de custo',core:true},
-  {key:'org_units',label:'Estrutura organizacional',title:'Estrutura organizacional',core:true},
+  {key:'cost_centers',label:'Centros de custo',title:'Centros de custo',core:true,importable:true},
+  {key:'org_units',label:'Estrutura organizacional',title:'Estrutura organizacional',core:true,importable:true},
   {key:'relationships',label:'Relacionamentos',title:'Relacionamentos',importable:true},
   {key:'attachments',label:'Anexos',title:'Anexos e documentos',importable:true}
 ];
@@ -109,8 +109,8 @@ export function F2MasterDataComplete({api,onNavigateAdmin,onToast}:{api:Api;onNa
       <div className="f2-content"><div className="f2-content-head"><div><small>{resource.core?'CORE':'F2'}</small><h3>{resource.title}</h3></div><button className="primary small" onClick={()=>{setSelected(null);setJson('{}')}} disabled={busy}>Novo</button></div>
         {loading?<div className="state-box">Carregando…</div>:<div className="f2-table"><table><thead><tr><th>Registro</th><th>ID</th><th>Resumo</th><th>Ações</th></tr></thead><tbody>{rows.map(r=><tr key={`${resource.key}-${idOf(r)}`}><td>{display(r)}</td><td><code>{idOf(r).slice(0,12)}</code></td><td>{r.active===false?'Inativo':'Ativo'}{r.kind?` · ${String(r.kind)}`:''}</td><td><button className="table-action" onClick={()=>select(r)}>Editar</button><button className="table-action" onClick={()=>void remove(r)} disabled={busy}>Desativar</button></td></tr>)}{rows.length===0&&<tr><td colSpan={4}>Nenhum registro encontrado.</td></tr>}</tbody></table></div>}
         <div className="f2-editor"><div className="panel-head"><div><small>{selected?'EDIÇÃO':'CRIAÇÃO'}</small><h3>{selected?`Editar ${resource.title}`:`Novo ${resource.title}`}</h3></div></div><textarea value={json} onChange={e=>setJson(e.target.value)} spellCheck={false}/><div className="form-actions"><button className="secondary" onClick={()=>setJson('{}')}>Limpar</button><button className="primary" onClick={()=>void save()} disabled={busy}>{busy?'Salvando…':selected?'Salvar alterações':'Criar registro'}</button></div>{selected&&canAttach&&<div className="f2-attachment"><label>Arquivo <input type="file" onChange={e=>setFile(e.target.files?.[0]??null)} disabled={busy}/></label><button className="secondary" onClick={()=>void uploadAttachment()} disabled={busy||!file}>Enviar anexo</button></div>}</div>
+        <p className="f2-footnote">Dados persistidos no tenant atual. Nenhuma operação fictícia é exibida.</p>
       </div>
     </div>
-    <div className="f2-footnote">F2 integra produtos, parceiros, endereços, unidades, preços, armazéns, hierarquia física, classificações, relacionamentos e documentos. Centros de custo e estrutura organizacional usam as entidades Core existentes e também possuem CRUD direto nesta tela.</div>
   </section>
 }
