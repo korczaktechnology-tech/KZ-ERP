@@ -50,6 +50,7 @@ try {
       if (!party) throw new Error(`Address ${String(address._id)} references a missing party`);
       const normalized: Address = { ...address };
       delete normalized.partyId;
+      delete normalized.companyId;
       const list = grouped.get(address.partyId) ?? [];
       list.push(normalized);
       grouped.set(address.partyId, list);
