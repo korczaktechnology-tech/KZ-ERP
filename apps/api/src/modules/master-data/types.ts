@@ -1,42 +1,5 @@
 import type { Decimal128 } from 'mongodb';
 
-export type MasterParty = {
-  _id?: string;
-  companyId: string;
-  code: string;
-  kind: 'person' | 'company';
-  roles: Array<'customer' | 'supplier' | 'contact' | 'carrier' | 'other'>;
-  name: string;
-  legalName?: string;
-  document?: string;
-  email?: string;
-  phone?: string;
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-export type MasterAddress = {
-  _id?: string;
-  companyId: string;
-  partyId: string;
-  code: string;
-  type: 'billing' | 'shipping' | 'commercial' | 'residential' | 'other';
-  label?: string;
-  recipientName?: string;
-  postalCode: string;
-  street: string;
-  number: string;
-  complement?: string;
-  district: string;
-  city: string;
-  state: string;
-  country: string;
-  active: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
 export type MasterUnit = {
   _id?: string;
   companyId: string;
