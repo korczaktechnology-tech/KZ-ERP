@@ -4,6 +4,7 @@ import { MongoClient } from 'mongodb';
 type Address = {
   _id?: string;
   partyId?: string;
+  companyId?: string;
   code: string;
   type: 'billing' | 'shipping' | 'commercial' | 'residential' | 'other';
   label?: string;
@@ -45,7 +46,7 @@ try {
 
     for (const address of docs) {
       if (!address.partyId) throw new Error(`Address ${String(address._id)} has no partyId`);
-      const party = await parties.findOne({ _id: address.partyId, companyId: (address as Address & { companyId?: string }).companyId });
+      const party = await parties.findOne({ _id: address.partyId, ...(address.companyId ? { companyId: address.companyId } : {}) });
       if (!party) throw new Error(`Address ${String(address._id)} references a missing party`);
       const normalized: Address = { ...address };
       delete normalized.partyId;
@@ -59,18 +60,21 @@ try {
       if (!party) throw new Error(`Party ${partyId} disappeared during migration`);
       const existing = Array.isArray(party.addresses) ? party.addresses : [];
       const existingIds = new Set(existing.map((x: Address) => String(x._id)));
-      const duplicateIds = incoming.filter(x => x._id && existingIds.has(String(x._id)));
-      if (duplicateIds.length) throw new Error(`Address ID conflict on party ${partyId}: ${duplicateIds.map(x => String(x._id)).join(', ')}`);
+      const pending = incoming.filter(x => !x._id || !existingIds.has(String(x._id)));
       const codes = new Set(existing.map((x: Address) => `${x.type}::${x.code}`));
-      for (const address of incoming) {
+      for (const address of pending) {
         const key = `${address.type}::${address.code}`;
         if (codes.has(key)) throw new Error(`Address code conflict on party ${partyId}: ${key}`);
         codes.add(key);
       }
+      if (existing.length + pending.length > 50) throw new Error(`Party ${partyId} would exceed the 50-address limit`);
     }
 
     for (const [partyId, incoming] of grouped) {
-      await parties.updateOne({ _id: partyId }, { $push: { addresses: { $each: incoming } }, $set: { updatedAt: new Date() } });
+      const party = await parties.findOne({ _id: partyId });
+      const existing = Array.isArray(party?.addresses) ? party.addresses : [];
+      const pending = incoming.filter(x => !x._id || !existing.some((y: Address) => y._id && x._id && String(y._id) === String(x._id)));
+      if (pending.length) await parties.updateOne({ _id: partyId }, { $push: { addresses: { $each: pending } }, $set: { updatedAt: new Date() } });
     }
 
     await addresses.drop();
