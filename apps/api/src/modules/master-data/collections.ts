@@ -6,7 +6,7 @@ export async function ensureMasterDataCollections(db: Db): Promise<void> {
       { key: { companyId: 1, code: 1 }, options: { unique: true, name: 'parties_company_code_unique' } },
       { key: { companyId: 1, active: 1, name: 1 } },
       { key: { companyId: 1, roles: 1 } }
-    ]
+    ],
     units: [
       { key: { companyId: 1, code: 1 }, options: { unique: true, name: 'units_company_code_unique' } },
       { key: { companyId: 1, active: 1 } }
